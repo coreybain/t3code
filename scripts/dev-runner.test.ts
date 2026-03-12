@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
@@ -7,6 +8,7 @@ import {
   DEFAULT_DEV_STATE_DIR,
   createDevRunnerEnv,
   findFirstAvailableOffset,
+  isMainModule,
   resolveModePortOffsets,
   resolveOffset,
 } from "./dev-runner.ts";
@@ -41,6 +43,24 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         );
 
         assert.ok(error.includes("Invalid T3CODE_PORT_OFFSET"));
+      }),
+    );
+  });
+
+  describe("isMainModule", () => {
+    it.effect("detects when the script is executed directly under Node", () =>
+      Effect.sync(() => {
+        const devRunnerUrl = new URL("./dev-runner.ts", import.meta.url);
+        const scriptPath = fileURLToPath(devRunnerUrl);
+        assert.equal(isMainModule(scriptPath, devRunnerUrl.href), true);
+      }),
+    );
+
+    it.effect("returns false for non-matching argv entries", () =>
+      Effect.sync(() => {
+        const siblingScriptPath = fileURLToPath(new URL("./release-smoke.ts", import.meta.url));
+        const devRunnerUrl = new URL("./dev-runner.ts", import.meta.url);
+        assert.equal(isMainModule(siblingScriptPath, devRunnerUrl.href), false);
       }),
     );
   });

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { homedir } from "node:os";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -481,6 +483,10 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
   );
 }
 
+export function isMainModule(argvEntry: string | undefined, importMetaUrl: string): boolean {
+  return argvEntry !== undefined && resolve(argvEntry) === fileURLToPath(importMetaUrl);
+}
+
 const devRunnerCli = Command.make("dev-runner", {
   mode: Argument.choice("mode", DEV_RUNNER_MODES).pipe(
     Argument.withDescription("Development mode to run."),
@@ -547,6 +553,6 @@ const runtimeProgram = Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
   Effect.provide(cliRuntimeLayer),
 );
 
-if (import.meta.main) {
+if (isMainModule(process.argv[1], import.meta.url)) {
   NodeRuntime.runMain(runtimeProgram);
 }

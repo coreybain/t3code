@@ -6,7 +6,7 @@ import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
-import { CursorIcon, Icon, VisualStudioCode, Zed } from "../Icons";
+import { AntigravityIcon, CursorIcon, Icon, VisualStudioCode, Zed } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 
@@ -23,9 +23,24 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       value: "vscode",
     },
     {
+      label: "VS Code Insiders",
+      Icon: VisualStudioCode,
+      value: "vscode-insiders",
+    },
+    {
+      label: "VSCodium",
+      Icon: VisualStudioCode,
+      value: "vscodium",
+    },
+    {
       label: "Zed",
       Icon: Zed,
       value: "zed",
+    },
+    {
+      label: "Antigravity",
+      Icon: AntigravityIcon,
+      value: "antigravity",
     },
     {
       label: isMacPlatform(platform)
@@ -96,11 +111,11 @@ export const OpenInPicker = memo(function OpenInPicker({
         onClick={() => openInEditor(preferredEditor)}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
-        <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
+        <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
           Open
         </span>
       </Button>
-      <GroupSeparator className="hidden @sm/header-actions:block" />
+      <GroupSeparator className="hidden @3xl/header-actions:block" />
       <Menu>
         <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
           <ChevronDownIcon aria-hidden="true" className="size-4" />

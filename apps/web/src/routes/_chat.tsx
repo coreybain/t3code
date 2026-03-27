@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import ThreadSidebar from "../components/Sidebar";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -11,9 +10,14 @@ import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
-import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
+import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
+import { useSettings } from "~/hooks/useSettings";
+import { Sidebar, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
+const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
+const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
+const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -27,6 +31,7 @@ function ChatRouteGlobalShortcuts() {
       ? selectThreadTerminalState(state.terminalStateByThreadId, routeThreadId).terminalOpen
       : false,
   );
+  const appSettings = useSettings();
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -51,7 +56,11 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.newLocal") {
         event.preventDefault();
         event.stopPropagation();
-        void handleNewThread(projectId);
+        void handleNewThread(projectId, {
+          envMode: resolveSidebarNewThreadEnvMode({
+            defaultEnvMode: appSettings.defaultThreadEnvMode,
+          }),
+        });
         return;
       }
 
@@ -78,6 +87,7 @@ function ChatRouteGlobalShortcuts() {
     projects,
     selectedThreadIdsSize,
     terminalOpen,
+    appSettings.defaultThreadEnvMode,
   ]);
 
   return null;
@@ -109,12 +119,17 @@ function ChatRouteLayout() {
         side="left"
         collapsible="offcanvas"
         className="border-r border-border bg-card text-foreground"
+        resizable={{
+          minWidth: THREAD_SIDEBAR_MIN_WIDTH,
+          shouldAcceptWidth: ({ nextWidth, wrapper }) =>
+            wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+          storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+        }}
       >
         <ThreadSidebar />
+        <SidebarRail />
       </Sidebar>
-      <DiffWorkerPoolProvider>
-        <Outlet />
-      </DiffWorkerPoolProvider>
+      <Outlet />
     </SidebarProvider>
   );
 }

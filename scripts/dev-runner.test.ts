@@ -74,7 +74,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
-          authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -95,7 +94,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: "/tmp/custom-t3",
-          authToken: "secret",
           noBrowser: true,
           autoBootstrapProjectFromCwd: false,
           logWebSocketEvents: true,
@@ -106,6 +104,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
         assert.equal(env.T3CODE_HOME, resolve("/tmp/custom-t3"));
         assert.equal(env.T3CODE_PORT, "4222");
+        assert.equal(env.VITE_HTTP_URL, "http://localhost:4222");
         assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
         assert.equal(env.T3CODE_NO_BROWSER, "1");
         assert.equal(env.T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "0");
@@ -125,7 +124,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
-          authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -143,11 +141,12 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
-          baseEnv: {},
+          baseEnv: {
+            T3CODE_LOG_WS_EVENTS: "1",
+          },
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
-          authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: false,
@@ -168,7 +167,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: "/tmp/my-t3",
-          authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -181,13 +179,12 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
-    it.effect("does not export backend bootstrap env for dev:desktop", () =>
+    it.effect("pins desktop dev to a stable backend port and websocket url", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev:desktop",
           baseEnv: {
             T3CODE_PORT: "3773",
-            T3CODE_AUTH_TOKEN: "stale-token",
             T3CODE_MODE: "web",
             T3CODE_NO_BROWSER: "0",
             T3CODE_HOST: "0.0.0.0",
@@ -196,7 +193,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           serverOffset: 0,
           webOffset: 0,
           t3Home: "/tmp/my-t3",
-          authToken: "fresh-token",
           noBrowser: true,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -207,14 +203,14 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
         assert.equal(env.T3CODE_HOME, resolve("/tmp/my-t3"));
         assert.equal(env.PORT, "5733");
-        assert.equal(env.ELECTRON_RENDERER_PORT, "5733");
-        assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:5733");
-        assert.equal(env.T3CODE_PORT, undefined);
-        assert.equal(env.T3CODE_AUTH_TOKEN, undefined);
+        assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5733");
+        assert.equal(env.HOST, "127.0.0.1");
+        assert.equal(env.T3CODE_PORT, "4222");
+        assert.equal(env.VITE_HTTP_URL, "http://127.0.0.1:4222");
         assert.equal(env.T3CODE_MODE, undefined);
         assert.equal(env.T3CODE_NO_BROWSER, undefined);
         assert.equal(env.T3CODE_HOST, undefined);
-        assert.equal(env.VITE_WS_URL, undefined);
+        assert.equal(env.VITE_WS_URL, "ws://127.0.0.1:4222");
       }),
     );
   });

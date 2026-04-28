@@ -1668,10 +1668,8 @@ export default function ChatView(props: ChatViewProps) {
         threadId,
       },
       replace: true,
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return fileTreeOpen ? { ...rest, fileTree: undefined } : { ...rest, fileTree: "1" };
-      },
+      search: (previous) =>
+        fileTreeOpen ? { ...previous, fileTree: undefined } : { ...previous, fileTree: "1" },
     });
   }, [environmentId, fileTreeOpen, isServerThread, navigate, threadId]);
 

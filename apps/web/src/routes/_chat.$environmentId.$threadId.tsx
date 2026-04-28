@@ -390,7 +390,10 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: { diff: undefined, fileTree: undefined },
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, diff: undefined };
+      },
     });
   }, [navigate, threadRef]);
   const openDiff = useCallback(() => {
@@ -414,7 +417,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: { fileTree: undefined },
+      search: (previous) => ({ ...previous, fileTree: undefined }),
     });
   }, [navigate, threadRef]);
   const openFileTree = useCallback(() => {
@@ -424,10 +427,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, fileTree: "1" };
-      },
+      search: (previous) => ({ ...previous, fileTree: "1" }),
     });
   }, [navigate, threadRef]);
   const openFileTreeFileDiff = useCallback(

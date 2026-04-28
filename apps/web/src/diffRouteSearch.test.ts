@@ -71,7 +71,7 @@ describe("parseDiffRouteSearch", () => {
     });
   });
 
-  it("lets diff take precedence over file tree", () => {
+  it("preserves diff and file tree when both are open", () => {
     const parsed = parseDiffRouteSearch({
       diff: "1",
       fileTree: "1",
@@ -80,6 +80,7 @@ describe("parseDiffRouteSearch", () => {
 
     expect(parsed).toEqual({
       diff: "1",
+      fileTree: "1",
       diffFilePath: "src/app.ts",
     });
   });

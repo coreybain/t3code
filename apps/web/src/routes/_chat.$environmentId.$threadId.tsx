@@ -1,5 +1,5 @@
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
@@ -33,28 +33,93 @@ const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const FileTreePanel = lazy(() => import("../components/FileTreePanel"));
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const FILE_TREE_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_file_tree_sidebar_width";
+const RIGHT_PANEL_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_right_panel_sidebar_width";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
 const FILE_TREE_INLINE_DEFAULT_WIDTH = "clamp(20rem,32vw,28rem)";
-const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
+const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 17 * 16;
 const FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH = 18 * 16;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
 
-function getInitialFileTreeInlineSidebarWidth() {
+function getStoredInlineSidebarWidth(storageKey: string): number | null {
+  try {
+    return getLocalStorageItem(storageKey, Schema.Finite);
+  } catch {
+    return null;
+  }
+}
+
+function getInitialInlineSidebarWidth(input: {
+  defaultWidth: string;
+  minWidth: number;
+  storageKey: string;
+}) {
   if (typeof window === "undefined") {
-    return FILE_TREE_INLINE_DEFAULT_WIDTH;
+    return input.defaultWidth;
   }
 
-  try {
-    const storedWidth = getLocalStorageItem(
-      FILE_TREE_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
-      Schema.Finite,
-    );
-    return storedWidth === null
-      ? FILE_TREE_INLINE_DEFAULT_WIDTH
-      : `${Math.max(FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH, storedWidth)}px`;
-  } catch {
-    return FILE_TREE_INLINE_DEFAULT_WIDTH;
+  const storedWidth =
+    getStoredInlineSidebarWidth(input.storageKey) ??
+    getStoredInlineSidebarWidth(RIGHT_PANEL_INLINE_SIDEBAR_WIDTH_STORAGE_KEY);
+  return storedWidth === null ? input.defaultWidth : `${Math.max(input.minWidth, storedWidth)}px`;
+}
+
+function parsePixelWidth(width: string) {
+  const trimmedWidth = width.trim();
+  if (!trimmedWidth.endsWith("px")) {
+    return null;
   }
+  const parsedWidth = Number.parseFloat(trimmedWidth);
+  return Number.isFinite(parsedWidth) ? parsedWidth : null;
+}
+
+function readInlineRightPanelWidth(panel: "diff" | "file-tree") {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const container = document.querySelector<HTMLElement>(
+    `[data-inline-right-panel="${panel}"] [data-slot='sidebar-container']`,
+  );
+  const width = container?.getBoundingClientRect().width ?? null;
+  return width !== null && Number.isFinite(width) ? width : null;
+}
+
+function getInlineRightPanelElement(panel: "diff" | "file-tree") {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return document.querySelector<HTMLElement>(`[data-inline-right-panel="${panel}"]`);
+}
+
+function applyInlineRightPanelWidth(panel: "diff" | "file-tree", width: number) {
+  getInlineRightPanelElement(panel)?.style.setProperty("--sidebar-width", formatPixelWidth(width));
+}
+
+function setInlineRightPanelTransitionDuration(
+  panel: "diff" | "file-tree",
+  duration: string | null,
+) {
+  const element = getInlineRightPanelElement(panel);
+  const targets = [
+    element?.querySelector<HTMLElement>("[data-slot='sidebar-gap']"),
+    element?.querySelector<HTMLElement>("[data-slot='sidebar-container']"),
+  ].filter((target): target is HTMLElement => target !== undefined && target !== null);
+  for (const target of targets) {
+    if (duration === null) {
+      target.style.removeProperty("transition-duration");
+    } else {
+      target.style.setProperty("transition-duration", duration);
+    }
+  }
+}
+
+function applyDiffPanelRightOffset(offset: number) {
+  getInlineRightPanelElement("diff")
+    ?.querySelector<HTMLElement>("[data-slot='sidebar-container']")
+    ?.style.setProperty("--sidebar-fixed-right-offset", formatPixelWidth(offset));
+}
+
+function formatPixelWidth(width: number) {
+  return `${width}px`;
 }
 
 const DiffLoadingFallback = (props: { mode: DiffPanelMode }) => {
@@ -100,9 +165,19 @@ const DiffPanelInlineSidebar = (props: {
   fixedRightOffset: string;
   onCloseDiff: () => void;
   onOpenDiff: () => void;
+  onResizeDiffPanel: (width: number) => void;
   renderDiffContent: boolean;
+  width: string;
 }) => {
-  const { diffOpen, fixedRightOffset, onCloseDiff, onOpenDiff, renderDiffContent } = props;
+  const {
+    diffOpen,
+    fixedRightOffset,
+    onCloseDiff,
+    onOpenDiff,
+    onResizeDiffPanel,
+    renderDiffContent,
+    width,
+  } = props;
   const onOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
@@ -114,22 +189,25 @@ const DiffPanelInlineSidebar = (props: {
     [onCloseDiff, onOpenDiff],
   );
   const shouldAcceptInlineSidebarWidth = useCallback(
-    ({ nextWidth, wrapper }: { nextWidth: number; wrapper: HTMLElement }) => {
+    ({ currentWidth, nextWidth }: { currentWidth: number; nextWidth: number }) => {
+      if (nextWidth <= currentWidth) return true;
+
       const composerForm = document.querySelector<HTMLElement>("[data-chat-composer-form='true']");
       if (!composerForm) return true;
       const composerViewport = composerForm.parentElement;
       if (!composerViewport) return true;
-      const previousSidebarWidth = wrapper.style.getPropertyValue("--sidebar-width");
-      wrapper.style.setProperty("--sidebar-width", `${nextWidth}px`);
 
       const viewportStyle = window.getComputedStyle(composerViewport);
       const viewportPaddingLeft = Number.parseFloat(viewportStyle.paddingLeft) || 0;
       const viewportPaddingRight = Number.parseFloat(viewportStyle.paddingRight) || 0;
-      const viewportContentWidth = Math.max(
+      const currentViewportContentWidth = Math.max(
         0,
         composerViewport.clientWidth - viewportPaddingLeft - viewportPaddingRight,
       );
-      const formRect = composerForm.getBoundingClientRect();
+      const projectedViewportContentWidth = Math.max(
+        0,
+        currentViewportContentWidth - (nextWidth - currentWidth),
+      );
       const composerFooter = composerForm.querySelector<HTMLElement>(
         "[data-chat-composer-footer='true']",
       );
@@ -144,17 +222,8 @@ const DiffPanelInlineSidebar = (props: {
         : 0;
       const minimumComposerWidth =
         COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX + composerRightActionsWidth + composerFooterGap;
-      const hasComposerOverflow = composerForm.scrollWidth > composerForm.clientWidth + 0.5;
-      const overflowsViewport = formRect.width > viewportContentWidth + 0.5;
-      const violatesMinimumComposerWidth = composerForm.clientWidth + 0.5 < minimumComposerWidth;
 
-      if (previousSidebarWidth.length > 0) {
-        wrapper.style.setProperty("--sidebar-width", previousSidebarWidth);
-      } else {
-        wrapper.style.removeProperty("--sidebar-width");
-      }
-
-      return !hasComposerOverflow && !overflowsViewport && !violatesMinimumComposerWidth;
+      return projectedViewportContentWidth >= minimumComposerWidth;
     },
     [],
   );
@@ -165,7 +234,8 @@ const DiffPanelInlineSidebar = (props: {
       open={diffOpen}
       onOpenChange={onOpenChange}
       className="w-auto min-h-0 flex-none bg-transparent"
-      style={{ "--sidebar-width": DIFF_INLINE_DEFAULT_WIDTH } as React.CSSProperties}
+      data-inline-right-panel="diff"
+      style={{ "--sidebar-width": width } as React.CSSProperties}
     >
       <Sidebar
         side="right"
@@ -174,6 +244,7 @@ const DiffPanelInlineSidebar = (props: {
         style={{ "--sidebar-fixed-right-offset": fixedRightOffset } as React.CSSProperties}
         resizable={{
           minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+          onResize: onResizeDiffPanel,
           shouldAcceptWidth: shouldAcceptInlineSidebarWidth,
           storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
@@ -190,9 +261,11 @@ const FileTreePanelInlineSidebar = (props: {
   onCloseFileTree: () => void;
   onOpenFileTree: () => void;
   onResizeFileTree: (width: number) => void;
+  width: string;
   children: React.ReactNode;
 }) => {
-  const { fileTreeOpen, onCloseFileTree, onOpenFileTree, onResizeFileTree, children } = props;
+  const { fileTreeOpen, onCloseFileTree, onOpenFileTree, onResizeFileTree, width, children } =
+    props;
   const onOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
@@ -210,7 +283,8 @@ const FileTreePanelInlineSidebar = (props: {
       open={fileTreeOpen}
       onOpenChange={onOpenChange}
       className="w-auto min-h-0 flex-none bg-transparent"
-      style={{ "--sidebar-width": FILE_TREE_INLINE_DEFAULT_WIDTH } as React.CSSProperties}
+      data-inline-right-panel="file-tree"
+      style={{ "--sidebar-width": width } as React.CSSProperties}
     >
       <Sidebar
         side="right"
@@ -271,8 +345,23 @@ function ChatThreadRouteView() {
   const diffOpen = search.diff === "1";
   const fileTreeOpen = search.fileTree === "1";
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
-  const [fileTreeInlineSidebarWidth, setFileTreeInlineSidebarWidth] = useState(
-    getInitialFileTreeInlineSidebarWidth,
+  const [diffInlineSidebarWidth, setDiffInlineSidebarWidth] = useState(() =>
+    getInitialInlineSidebarWidth({
+      defaultWidth: DIFF_INLINE_DEFAULT_WIDTH,
+      minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+      storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+    }),
+  );
+  const [fileTreeInlineSidebarWidth, setFileTreeInlineSidebarWidth] = useState(() =>
+    getInitialInlineSidebarWidth({
+      defaultWidth: FILE_TREE_INLINE_DEFAULT_WIDTH,
+      minWidth: FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH,
+      storageKey: FILE_TREE_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+    }),
+  );
+  const combinedRightPanelResizeTotalRef = useRef<number | null>(null);
+  const combinedRightPanelResizeResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
   );
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
   const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
@@ -358,9 +447,71 @@ function ChatThreadRouteView() {
     },
     [markDiffOpened, navigate, threadRef],
   );
-  const updateFileTreeInlineSidebarWidth = useCallback((width: number) => {
-    setFileTreeInlineSidebarWidth(`${Math.max(FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH, width)}px`);
+  const scheduleCombinedRightPanelResizeReset = useCallback(() => {
+    if (combinedRightPanelResizeResetTimeoutRef.current !== null) {
+      clearTimeout(combinedRightPanelResizeResetTimeoutRef.current);
+    }
+    combinedRightPanelResizeResetTimeoutRef.current = setTimeout(() => {
+      combinedRightPanelResizeTotalRef.current = null;
+      combinedRightPanelResizeResetTimeoutRef.current = null;
+      setInlineRightPanelTransitionDuration("diff", null);
+    }, 180);
   }, []);
+  const updateDiffInlineSidebarWidth = useCallback((width: number) => {
+    combinedRightPanelResizeTotalRef.current = null;
+    if (combinedRightPanelResizeResetTimeoutRef.current !== null) {
+      clearTimeout(combinedRightPanelResizeResetTimeoutRef.current);
+      combinedRightPanelResizeResetTimeoutRef.current = null;
+    }
+    setDiffInlineSidebarWidth(formatPixelWidth(Math.max(DIFF_INLINE_SIDEBAR_MIN_WIDTH, width)));
+  }, []);
+  const updateFileTreeInlineSidebarWidth = useCallback(
+    (width: number) => {
+      const requestedFileTreeWidth = Math.max(FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH, width);
+      if (diffOpen && fileTreeOpen) {
+        const currentDiffWidth =
+          parsePixelWidth(diffInlineSidebarWidth) ??
+          readInlineRightPanelWidth("diff") ??
+          DIFF_INLINE_SIDEBAR_MIN_WIDTH;
+        const currentFileTreeWidth =
+          parsePixelWidth(fileTreeInlineSidebarWidth) ??
+          readInlineRightPanelWidth("file-tree") ??
+          requestedFileTreeWidth;
+        const combinedWidth =
+          combinedRightPanelResizeTotalRef.current ?? currentDiffWidth + currentFileTreeWidth;
+        combinedRightPanelResizeTotalRef.current = combinedWidth;
+
+        const maximumFileTreeWidth = Math.max(
+          FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH,
+          combinedWidth - DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+        );
+        const nextFileTreeWidth = Math.min(requestedFileTreeWidth, maximumFileTreeWidth);
+        const nextDiffWidth = Math.max(
+          DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+          combinedWidth - nextFileTreeWidth,
+        );
+
+        scheduleCombinedRightPanelResizeReset();
+        setInlineRightPanelTransitionDuration("diff", "0ms");
+        applyInlineRightPanelWidth("diff", nextDiffWidth);
+        applyInlineRightPanelWidth("file-tree", nextFileTreeWidth);
+        applyDiffPanelRightOffset(nextFileTreeWidth);
+        setFileTreeInlineSidebarWidth(formatPixelWidth(nextFileTreeWidth));
+        setDiffInlineSidebarWidth(formatPixelWidth(nextDiffWidth));
+        return;
+      }
+
+      combinedRightPanelResizeTotalRef.current = null;
+      setFileTreeInlineSidebarWidth(formatPixelWidth(requestedFileTreeWidth));
+    },
+    [
+      diffInlineSidebarWidth,
+      diffOpen,
+      fileTreeInlineSidebarWidth,
+      fileTreeOpen,
+      scheduleCombinedRightPanelResizeReset,
+    ],
+  );
   const addPathMentionToDraft = useCallback(
     (_kind: "file" | "directory", path: string) => {
       if (!threadRef) {
@@ -385,6 +536,14 @@ function ChatThreadRouteView() {
       void navigate({ to: "/", replace: true });
     }
   }, [bootstrapComplete, environmentHasAnyThreads, navigate, routeThreadExists, threadRef]);
+
+  useEffect(() => {
+    return () => {
+      if (combinedRightPanelResizeResetTimeoutRef.current !== null) {
+        clearTimeout(combinedRightPanelResizeResetTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!threadRef || !serverThreadStarted || !draftThread?.promotedTo) {
@@ -428,13 +587,16 @@ function ChatThreadRouteView() {
           fixedRightOffset={fileTreeOpen ? fileTreeInlineSidebarWidth : "0px"}
           onCloseDiff={closeDiff}
           onOpenDiff={openDiff}
+          onResizeDiffPanel={updateDiffInlineSidebarWidth}
           renderDiffContent={shouldRenderDiffContent}
+          width={diffInlineSidebarWidth}
         />
         <FileTreePanelInlineSidebar
           fileTreeOpen={fileTreeOpen}
           onCloseFileTree={closeFileTree}
           onOpenFileTree={openFileTree}
           onResizeFileTree={updateFileTreeInlineSidebarWidth}
+          width={fileTreeInlineSidebarWidth}
         >
           {fileTreeOpen ? fileTreeContent : null}
         </FileTreePanelInlineSidebar>

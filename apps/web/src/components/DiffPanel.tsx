@@ -36,7 +36,7 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
-import { ToggleGroup, Toggle } from "./ui/toggle-group";
+import { Toggle } from "./ui/toggle";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -520,25 +520,26 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
-        <ToggleGroup
-          className="shrink-0"
+        <Toggle
+          aria-label={
+            diffRenderMode === "stacked"
+              ? "Switch to split diff view"
+              : "Switch to stacked diff view"
+          }
+          title={diffRenderMode === "stacked" ? "Switch to split view" : "Switch to stacked view"}
           variant="outline"
           size="xs"
-          value={[diffRenderMode]}
-          onValueChange={(value) => {
-            const next = value[0];
-            if (next === "stacked" || next === "split") {
-              setDiffRenderMode(next);
-            }
+          pressed={diffRenderMode === "split"}
+          onPressedChange={() => {
+            setDiffRenderMode((current) => (current === "stacked" ? "split" : "stacked"));
           }}
         >
-          <Toggle aria-label="Stacked diff view" value="stacked">
-            <Rows3Icon className="size-3" />
-          </Toggle>
-          <Toggle aria-label="Split diff view" value="split">
+          {diffRenderMode === "stacked" ? (
             <Columns2Icon className="size-3" />
-          </Toggle>
-        </ToggleGroup>
+          ) : (
+            <Rows3Icon className="size-3" />
+          )}
+        </Toggle>
         <Toggle
           aria-label={diffWordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
           title={diffWordWrap ? "Disable line wrapping" : "Enable line wrapping"}

@@ -14,6 +14,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -80,14 +81,26 @@ function FileTreePanelHeader(props: {
   viewMode: FileTreeViewMode;
   onViewModeChange: (viewMode: FileTreeViewMode) => void;
   searchInputValue: string;
+  searchVisible: boolean;
   onSearchInputValueChange: (query: string) => void;
+  onToggleSearch: () => void;
   onClose: () => void;
 }) {
   const selectedViewLabel = props.viewMode === "all" ? "All files" : "Changed files";
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!props.searchVisible) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+    });
+  }, [props.searchVisible]);
 
   return (
-    <div className="flex flex-col gap-2 border-b border-border px-3 py-3">
-      <div className="flex min-w-0 items-center justify-between gap-2">
+    <div className="flex flex-col border-b border-border">
+      <div className="flex h-12 min-w-0 items-center justify-between gap-2 px-4">
         <Select
           value={props.viewMode}
           onValueChange={(value) => props.onViewModeChange(value as FileTreeViewMode)}
@@ -95,7 +108,7 @@ function FileTreePanelHeader(props: {
           <SelectTrigger
             size="sm"
             variant="ghost"
-            className="w-fit min-w-0 self-start gap-1.5 px-1.5 font-medium text-foreground [&_[data-slot=select-icon]_svg]:text-foreground [&_[data-slot=select-icon]_svg]:opacity-100 [&_[data-slot=select-icon]_svg]:stroke-2.5"
+            className="h-7 min-h-7 w-fit min-w-0 gap-1.5 px-1.5 font-medium text-foreground sm:h-6 sm:min-h-6 [&_[data-slot=select-icon]_svg]:text-foreground [&_[data-slot=select-icon]_svg]:opacity-100 [&_[data-slot=select-icon]_svg]:stroke-2.5"
             aria-label="File tree view"
           >
             <SelectValue>{selectedViewLabel}</SelectValue>
@@ -105,40 +118,58 @@ function FileTreePanelHeader(props: {
             <SelectItem value="changed">Changed files</SelectItem>
           </SelectPopup>
         </Select>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className="shrink-0 text-muted-foreground hover:text-foreground"
-          onClick={props.onClose}
-          aria-label="Close file tree"
-        >
-          <XIcon className="size-4" />
-        </Button>
-      </div>
-      <div className="relative">
-        <SearchIcon className="pointer-events-none absolute left-2 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground/70" />
-        <Input
-          type="search"
-          size="sm"
-          className="rounded-md [&_[data-slot=input]]:pl-7"
-          placeholder="Search files"
-          value={props.searchInputValue}
-          onChange={(event) => props.onSearchInputValueChange(event.currentTarget.value)}
-        />
-        {props.searchInputValue ? (
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             type="button"
             size="icon-xs"
             variant="ghost"
-            className="absolute right-1 top-1/2 z-10 -translate-y-1/2"
-            onClick={() => props.onSearchInputValueChange("")}
-            aria-label="Clear file search"
+            className="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground"
+            onClick={props.onToggleSearch}
+            aria-label={props.searchVisible ? "Hide file search" : "Search files"}
+            data-active={props.searchVisible || props.searchInputValue.length > 0}
           >
-            <XIcon className="size-3.5" />
+            <SearchIcon className="size-4" />
           </Button>
-        ) : null}
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            className="text-muted-foreground hover:text-foreground"
+            onClick={props.onClose}
+            aria-label="Close file tree"
+          >
+            <XIcon className="size-4" />
+          </Button>
+        </div>
       </div>
+      {props.searchVisible ? (
+        <div className="px-3 pb-3">
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute left-2 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground/70" />
+            <Input
+              ref={searchInputRef}
+              type="search"
+              size="sm"
+              className="rounded-md [&_[data-slot=input]]:pl-7"
+              placeholder="Search files"
+              value={props.searchInputValue}
+              onChange={(event) => props.onSearchInputValueChange(event.currentTarget.value)}
+            />
+            {props.searchInputValue ? (
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                className="absolute right-1 top-1/2 z-10 -translate-y-1/2"
+                onClick={() => props.onSearchInputValueChange("")}
+                aria-label="Clear file search"
+              >
+                <XIcon className="size-3.5" />
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -189,23 +220,31 @@ const FileTreeRow = memo(function FileTreeRow(props: FileTreeRowProps) {
             ) : (
               <ChevronRightIcon className="size-3.5" />
             )
+          ) : node.kind === "file" ? (
+            <VscodeEntryIcon
+              pathValue={node.path}
+              kind={node.kind}
+              theme={theme}
+              className="size-4"
+            />
           ) : null}
         </span>
-        <VscodeEntryIcon pathValue={node.path} kind={node.kind} theme={theme} className="size-4" />
         <span className="min-w-0 truncate">{node.name}</span>
       </button>
       {hasChildren && expanded
-        ? node.children.map((child) => (
-            <FileTreeRow
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              expandedPaths={expandedPaths}
-              theme={theme}
-              onToggle={onToggle}
-              onContextMenu={onContextMenu}
-            />
-          ))
+        ? node.children.map((child) => {
+            return (
+              <FileTreeRow
+                key={child.path}
+                node={child}
+                depth={depth + 1}
+                expandedPaths={expandedPaths}
+                theme={theme}
+                onToggle={onToggle}
+                onContextMenu={onContextMenu}
+              />
+            );
+          })
         : null}
     </div>
   );
@@ -232,6 +271,7 @@ export default function FileTreePanel(props: {
     onOpenFileDiff,
   } = props;
   const [viewMode, setViewMode] = useState<FileTreeViewMode>("all");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [searchInputValue, setSearchInputValue] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
@@ -284,6 +324,22 @@ export default function FileTreePanel(props: {
       window.clearTimeout(timeoutId);
     };
   }, [searchInputValue]);
+
+  const searchVisible = searchOpen || searchInputValue.length > 0 || searchQuery.length > 0;
+
+  const clearSearch = useCallback(() => {
+    setSearchInputValue("");
+    setSearchQuery("");
+  }, []);
+
+  const toggleSearch = useCallback(() => {
+    if (searchVisible) {
+      clearSearch();
+      setSearchOpen(false);
+      return;
+    }
+    setSearchOpen(true);
+  }, [clearSearch, searchVisible]);
 
   useEffect(() => {
     if (viewMode === "changed") {
@@ -412,12 +468,14 @@ export default function FileTreePanel(props: {
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         searchInputValue={searchInputValue}
+        searchVisible={searchVisible}
         onSearchInputValueChange={(value) => {
           setSearchInputValue(value);
           if (value.length === 0) {
             setSearchQuery("");
           }
         }}
+        onToggleSearch={toggleSearch}
         onClose={onClose}
       />
       {allFilesQuery.data?.truncated && viewMode === "all" ? (

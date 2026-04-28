@@ -362,6 +362,7 @@ function SidebarRail({
   const sidebarInstance = React.useContext(SidebarInstanceContext);
   const railRef = React.useRef<HTMLButtonElement | null>(null);
   const suppressClickRef = React.useRef(false);
+  const hydratedStorageKeyRef = React.useRef<string | null>(null);
   const resizeStateRef = React.useRef<{
     moved: boolean;
     pointerId: number;
@@ -504,6 +505,7 @@ function SidebarRail({
 
         activeResizeState.wrapper.style.setProperty("--sidebar-width", `${nextWidth}px`);
         activeResizeState.width = nextWidth;
+        resolvedResizable.onResize?.(nextWidth);
       });
     },
     [onPointerMove, resolvedResizable],
@@ -559,6 +561,8 @@ function SidebarRail({
 
   React.useEffect(() => {
     if (!resolvedResizable?.storageKey || typeof window === "undefined") return;
+    if (resizeStateRef.current) return;
+    if (hydratedStorageKeyRef.current === resolvedResizable.storageKey) return;
     const rail = railRef.current;
     if (!rail) return;
     const wrapper = rail.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
@@ -567,6 +571,7 @@ function SidebarRail({
     const storedWidth = getLocalStorageItem(resolvedResizable.storageKey, Schema.Finite);
     if (storedWidth === null) return;
     const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
+    hydratedStorageKeyRef.current = resolvedResizable.storageKey;
     wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
     resolvedResizable.onResize?.(clampedWidth);
   }, [resolvedResizable]);

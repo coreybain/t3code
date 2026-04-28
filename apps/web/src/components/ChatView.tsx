@@ -1664,9 +1664,22 @@ export default function ChatView(props: ChatViewProps) {
     [keybindings, nonTerminalShortcutLabelOptions],
   );
   const onToggleDiff = useCallback(() => {
-    if (!isServerThread) {
+    if (routeKind === "draft") {
+      if (!draftId) {
+        return;
+      }
+      void navigate({
+        to: "/draft/$draftId",
+        params: { draftId },
+        replace: true,
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
+        },
+      });
       return;
     }
+
     if (!diffOpen) {
       onDiffPanelOpen?.();
     }
@@ -1682,7 +1695,7 @@ export default function ChatView(props: ChatViewProps) {
         return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
       },
     });
-  }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+  }, [diffOpen, draftId, environmentId, navigate, onDiffPanelOpen, routeKind, threadId]);
   const onToggleFileTree = useCallback(() => {
     if (routeKind === "draft") {
       if (!draftId) {

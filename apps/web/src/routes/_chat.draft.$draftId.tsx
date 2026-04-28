@@ -4,24 +4,36 @@ import { scopeProjectRef } from "@t3tools/client-runtime";
 import { Schema } from "effect";
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
+import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
+import {
+  DiffPanelHeaderSkeleton,
+  DiffPanelLoadingState,
+  DiffPanelShell,
+  type DiffPanelMode,
+} from "../components/DiffPanelShell";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "../components/ui/sidebar";
 import { createThreadSelectorAcrossEnvironments } from "../storeSelectors";
 import { selectProjectByRef, useStore } from "../store";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
-import { parseDiffRouteSearch } from "../diffRouteSearch";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useServerAvailableEditors } from "~/rpc/serverState";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { getLocalStorageItem } from "~/hooks/useLocalStorage";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 
+const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const FileTreePanel = lazy(() => import("../components/FileTreePanel"));
+const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const FILE_TREE_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_file_tree_sidebar_width";
 const RIGHT_PANEL_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_right_panel_sidebar_width";
+const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
 const FILE_TREE_INLINE_DEFAULT_WIDTH = "clamp(20rem,32vw,28rem)";
+const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 17 * 16;
 const FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH = 18 * 16;
+const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
 
 function formatPixelWidth(width: number) {
   return `${width}px`;
@@ -35,18 +47,36 @@ function getStoredInlineSidebarWidth(storageKey: string): number | null {
   }
 }
 
-function getInitialFileTreeInlineSidebarWidth() {
+function getInitialInlineSidebarWidth(input: {
+  defaultWidth: string;
+  minWidth: number;
+  storageKey: string;
+}) {
   if (typeof window === "undefined") {
-    return FILE_TREE_INLINE_DEFAULT_WIDTH;
+    return input.defaultWidth;
   }
 
   const storedWidth =
-    getStoredInlineSidebarWidth(FILE_TREE_INLINE_SIDEBAR_WIDTH_STORAGE_KEY) ??
+    getStoredInlineSidebarWidth(input.storageKey) ??
     getStoredInlineSidebarWidth(RIGHT_PANEL_INLINE_SIDEBAR_WIDTH_STORAGE_KEY);
   return storedWidth === null
-    ? FILE_TREE_INLINE_DEFAULT_WIDTH
-    : formatPixelWidth(Math.max(FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH, storedWidth));
+    ? input.defaultWidth
+    : formatPixelWidth(Math.max(input.minWidth, storedWidth));
 }
+
+const DiffLoadingFallback = (props: { mode: DiffPanelMode }) => (
+  <DiffPanelShell mode={props.mode} header={<DiffPanelHeaderSkeleton />}>
+    <DiffPanelLoadingState label="Loading diff viewer..." />
+  </DiffPanelShell>
+);
+
+const LazyDiffPanel = (props: { mode: DiffPanelMode }) => (
+  <DiffWorkerPoolProvider>
+    <Suspense fallback={<DiffLoadingFallback mode={props.mode} />}>
+      <DiffPanel mode={props.mode} />
+    </Suspense>
+  </DiffWorkerPoolProvider>
+);
 
 const FileTreeLoadingFallback = () => (
   <div className="flex h-full min-w-0 flex-col bg-background">
@@ -64,6 +94,93 @@ const LazyFileTreePanel = (props: React.ComponentProps<typeof FileTreePanel>) =>
     <FileTreePanel {...props} />
   </Suspense>
 );
+
+const DiffPanelInlineSidebar = (props: {
+  diffOpen: boolean;
+  fixedRightOffset: string;
+  onCloseDiff: () => void;
+  onOpenDiff: () => void;
+  onResizeDiffPanel: (width: number) => void;
+  width: string;
+}) => {
+  const { diffOpen, fixedRightOffset, onCloseDiff, onOpenDiff, onResizeDiffPanel, width } = props;
+  const onOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        onOpenDiff();
+        return;
+      }
+      onCloseDiff();
+    },
+    [onCloseDiff, onOpenDiff],
+  );
+  const shouldAcceptInlineSidebarWidth = useCallback(
+    ({ currentWidth, nextWidth }: { currentWidth: number; nextWidth: number }) => {
+      if (nextWidth <= currentWidth) return true;
+
+      const composerForm = document.querySelector<HTMLElement>("[data-chat-composer-form='true']");
+      if (!composerForm) return true;
+      const composerViewport = composerForm.parentElement;
+      if (!composerViewport) return true;
+
+      const viewportStyle = window.getComputedStyle(composerViewport);
+      const viewportPaddingLeft = Number.parseFloat(viewportStyle.paddingLeft) || 0;
+      const viewportPaddingRight = Number.parseFloat(viewportStyle.paddingRight) || 0;
+      const currentViewportContentWidth = Math.max(
+        0,
+        composerViewport.clientWidth - viewportPaddingLeft - viewportPaddingRight,
+      );
+      const projectedViewportContentWidth = Math.max(
+        0,
+        currentViewportContentWidth - (nextWidth - currentWidth),
+      );
+      const composerFooter = composerForm.querySelector<HTMLElement>(
+        "[data-chat-composer-footer='true']",
+      );
+      const composerRightActions = composerForm.querySelector<HTMLElement>(
+        "[data-chat-composer-actions='right']",
+      );
+      const composerRightActionsWidth = composerRightActions?.getBoundingClientRect().width ?? 0;
+      const composerFooterGap = composerFooter
+        ? Number.parseFloat(window.getComputedStyle(composerFooter).columnGap) ||
+          Number.parseFloat(window.getComputedStyle(composerFooter).gap) ||
+          0
+        : 0;
+      const minimumComposerWidth =
+        COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX + composerRightActionsWidth + composerFooterGap;
+
+      return projectedViewportContentWidth >= minimumComposerWidth;
+    },
+    [],
+  );
+
+  return (
+    <SidebarProvider
+      defaultOpen={false}
+      open={diffOpen}
+      onOpenChange={onOpenChange}
+      className="w-auto min-h-0 flex-none bg-transparent"
+      data-inline-right-panel="diff"
+      style={{ "--sidebar-width": width } as React.CSSProperties}
+    >
+      <Sidebar
+        side="right"
+        collapsible="offcanvas"
+        className="border-l border-border bg-card text-foreground"
+        style={{ "--sidebar-fixed-right-offset": fixedRightOffset } as React.CSSProperties}
+        resizable={{
+          minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+          onResize: onResizeDiffPanel,
+          shouldAcceptWidth: shouldAcceptInlineSidebarWidth,
+          storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+        }}
+      >
+        {diffOpen ? <LazyDiffPanel mode="sidebar" /> : null}
+        <SidebarRail />
+      </Sidebar>
+    </SidebarProvider>
+  );
+};
 
 const FileTreePanelInlineSidebar = (props: {
   fileTreeOpen: boolean;
@@ -137,10 +254,22 @@ function DraftChatThreadRouteView() {
       : undefined,
   );
   const serverThreadStarted = threadHasStarted(serverThread);
+  const diffOpen = search.diff === "1";
   const fileTreeOpen = search.fileTree === "1";
-  const shouldUseFileTreeSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
-  const [fileTreeInlineSidebarWidth, setFileTreeInlineSidebarWidth] = useState(
-    getInitialFileTreeInlineSidebarWidth,
+  const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const [diffInlineSidebarWidth, setDiffInlineSidebarWidth] = useState(() =>
+    getInitialInlineSidebarWidth({
+      defaultWidth: DIFF_INLINE_DEFAULT_WIDTH,
+      minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+      storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+    }),
+  );
+  const [fileTreeInlineSidebarWidth, setFileTreeInlineSidebarWidth] = useState(() =>
+    getInitialInlineSidebarWidth({
+      defaultWidth: FILE_TREE_INLINE_DEFAULT_WIDTH,
+      minWidth: FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH,
+      storageKey: FILE_TREE_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+    }),
   );
   const fileTreeCwd = activeProject
     ? projectScriptCwd({
@@ -148,6 +277,26 @@ function DraftChatThreadRouteView() {
         worktreePath: draftSession?.worktreePath ?? null,
       })
     : null;
+  const closeDiff = useCallback(() => {
+    void navigate({
+      to: "/draft/$draftId",
+      params: buildDraftThreadRouteParams(draftId),
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, diff: undefined };
+      },
+    });
+  }, [draftId, navigate]);
+  const openDiff = useCallback(() => {
+    void navigate({
+      to: "/draft/$draftId",
+      params: buildDraftThreadRouteParams(draftId),
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, diff: "1" };
+      },
+    });
+  }, [draftId, navigate]);
   const closeFileTree = useCallback(() => {
     void navigate({
       to: "/draft/$draftId",
@@ -162,6 +311,9 @@ function DraftChatThreadRouteView() {
       search: (previous) => ({ ...previous, fileTree: "1" }),
     });
   }, [draftId, navigate]);
+  const updateDiffInlineSidebarWidth = useCallback((width: number) => {
+    setDiffInlineSidebarWidth(formatPixelWidth(Math.max(DIFF_INLINE_SIDEBAR_MIN_WIDTH, width)));
+  }, []);
   const updateFileTreeInlineSidebarWidth = useCallback((width: number) => {
     setFileTreeInlineSidebarWidth(
       formatPixelWidth(Math.max(FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH, width)),
@@ -229,7 +381,7 @@ function DraftChatThreadRouteView() {
 
   const fileTreeContent = (
     <LazyFileTreePanel
-      mode={shouldUseFileTreeSheet ? "sheet" : "sidebar"}
+      mode={shouldUseRightPanelSheet ? "sheet" : "sidebar"}
       environmentId={draftSession.environmentId}
       cwd={fileTreeCwd}
       availableEditors={availableEditors}
@@ -239,7 +391,7 @@ function DraftChatThreadRouteView() {
     />
   );
 
-  if (!shouldUseFileTreeSheet) {
+  if (!shouldUseRightPanelSheet) {
     return (
       <>
         <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -250,6 +402,14 @@ function DraftChatThreadRouteView() {
             routeKind="draft"
           />
         </SidebarInset>
+        <DiffPanelInlineSidebar
+          diffOpen={diffOpen}
+          fixedRightOffset={fileTreeOpen ? fileTreeInlineSidebarWidth : "0px"}
+          onCloseDiff={closeDiff}
+          onOpenDiff={openDiff}
+          onResizeDiffPanel={updateDiffInlineSidebarWidth}
+          width={diffInlineSidebarWidth}
+        />
         <FileTreePanelInlineSidebar
           fileTreeOpen={fileTreeOpen}
           onCloseFileTree={closeFileTree}
@@ -273,6 +433,9 @@ function DraftChatThreadRouteView() {
           routeKind="draft"
         />
       </SidebarInset>
+      <RightPanelSheet open={diffOpen} onClose={closeDiff}>
+        {diffOpen && !fileTreeOpen ? <LazyDiffPanel mode="sheet" /> : null}
+      </RightPanelSheet>
       <RightPanelSheet open={fileTreeOpen} onClose={closeFileTree}>
         {fileTreeOpen ? fileTreeContent : null}
       </RightPanelSheet>

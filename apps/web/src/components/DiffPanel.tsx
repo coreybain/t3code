@@ -3,7 +3,7 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import type { TurnId } from "@t3tools/contracts";
+import { DEFAULT_MODEL_BY_PROVIDER, type TurnId } from "@t3tools/contracts";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -26,6 +26,7 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
@@ -33,6 +34,7 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
+import { buildLocalDraftThread } from "./ChatView.logic";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
@@ -181,11 +183,42 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
+  const routeDraftId = useParams({
+    strict: false,
+    select: (params) => (params.draftId ? DraftId.make(params.draftId) : null),
+  });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = routeThreadRef?.threadId ?? null;
-  const activeThread = useStore(
+  const serverThread = useStore(
     useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
+  );
+  const draftThread = useComposerDraftStore((store) =>
+    routeDraftId ? store.getDraftSession(routeDraftId) : null,
+  );
+  const draftProject = useStore((store) =>
+    draftThread
+      ? selectProjectByRef(store, {
+          environmentId: draftThread.environmentId,
+          projectId: draftThread.projectId,
+        })
+      : undefined,
+  );
+  const activeThread = useMemo(
+    () =>
+      serverThread ??
+      (draftThread && routeDraftId
+        ? buildLocalDraftThread(
+            draftThread.threadId,
+            draftThread,
+            draftProject?.defaultModelSelection ?? {
+              provider: "codex",
+              model: DEFAULT_MODEL_BY_PROVIDER.codex,
+            },
+            null,
+          )
+        : undefined),
+    [draftProject?.defaultModelSelection, draftThread, routeDraftId, serverThread],
   );
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useStore((store) =>

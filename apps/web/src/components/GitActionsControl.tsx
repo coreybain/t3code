@@ -1,4 +1,5 @@
 import { type ScopedThreadRef } from "@t3tools/contracts";
+import type { GitCommitScope } from "@t3tools/contracts/settings";
 import type {
   GitActionProgressEvent,
   GitRunStackedActionResult,
@@ -12,11 +13,13 @@ import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  collectThreadChangedFilePaths,
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
+  resolveCommitScopeFiles,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
@@ -54,6 +57,7 @@ import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
 import { useStore } from "~/store";
 import { createThreadSelectorByRef } from "~/storeSelectors";
+import { useSettings } from "~/hooks/useSettings";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -96,6 +100,15 @@ interface RunGitActionWithToastInput {
 }
 
 const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
+const GIT_COMMIT_SCOPE_LABELS: Record<GitCommitScope, string> = {
+  thread: "Thread changes",
+  all: "All changes",
+};
+const GIT_COMMIT_SCOPE_DESCRIPTIONS: Record<GitCommitScope, string> = {
+  thread: "Only changed files touched by this thread.",
+  all: "Every changed file in the current worktree.",
+};
+const EMPTY_WORKING_TREE_FILES: GitStatusResult["workingTree"]["files"] = [];
 
 function formatElapsedDescription(startedAtMs: number | null): string | undefined {
   if (startedAtMs === null) {
@@ -235,8 +248,10 @@ export default function GitActionsControl({
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const setThreadBranch = useStore((store) => store.setThreadBranch);
   const queryClient = useQueryClient();
+  const defaultCommitScope = useSettings((settings) => settings.gitCommitScope);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
+  const [dialogCommitScope, setDialogCommitScope] = useState<GitCommitScope>(defaultCommitScope);
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
@@ -327,9 +342,23 @@ export default function GitActionsControl({
   const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
   const gitStatusForActions = gitStatus;
 
-  const allFiles = gitStatusForActions?.workingTree.files ?? [];
-  const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
-  const allSelected = excludedFiles.size === 0;
+  const allFiles = gitStatusForActions?.workingTree.files ?? EMPTY_WORKING_TREE_FILES;
+  const threadChangedFilePaths = useMemo(
+    () => collectThreadChangedFilePaths(activeServerThread?.turnDiffSummaries),
+    [activeServerThread?.turnDiffSummaries],
+  );
+  const dialogScopeFiles = useMemo(
+    () =>
+      resolveCommitScopeFiles({
+        scope: dialogCommitScope,
+        workingTreeFiles: allFiles,
+        threadChangedFilePaths,
+      }),
+    [allFiles, dialogCommitScope, threadChangedFilePaths],
+  );
+  const selectedFiles = dialogScopeFiles.filter((f) => !excludedFiles.has(f.path));
+  const allSelected =
+    dialogScopeFiles.length > 0 && dialogScopeFiles.every((file) => !excludedFiles.has(file.path));
   const noneSelected = selectedFiles.length === 0;
 
   const initMutation = useMutation(
@@ -504,6 +533,31 @@ export default function GitActionsControl({
       const includesCommit =
         actionCanCommit &&
         (action === "commit" || !!actionStatus?.hasWorkingTreeChanges || featureBranch);
+      const scopedDefaultFilePaths =
+        includesCommit && !filePaths && defaultCommitScope === "thread"
+          ? resolveCommitScopeFiles({
+              scope: "thread",
+              workingTreeFiles: actionStatus?.workingTree.files ?? [],
+              threadChangedFilePaths,
+            }).map((file) => file.path)
+          : undefined;
+      const actionFilePaths = filePaths ?? scopedDefaultFilePaths;
+      if (
+        includesCommit &&
+        !filePaths &&
+        defaultCommitScope === "thread" &&
+        scopedDefaultFilePaths?.length === 0
+      ) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "No thread changes to commit",
+            description: "Open the commit dialog and switch to All changes to commit the worktree.",
+            ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+          }),
+        );
+        return;
+      }
       if (
         !skipDefaultBranchPrompt &&
         requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
@@ -523,16 +577,19 @@ export default function GitActionsControl({
           includesCommit,
           ...(commitMessage ? { commitMessage } : {}),
           ...(onConfirmed ? { onConfirmed } : {}),
-          ...(filePaths ? { filePaths } : {}),
+          ...(actionFilePaths ? { filePaths: actionFilePaths } : {}),
         });
         return;
       }
       onConfirmed?.();
+      const hasCommitChanges = actionFilePaths
+        ? actionFilePaths.length > 0
+        : !!actionStatus?.hasWorkingTreeChanges;
 
       const progressStages = buildGitActionProgressStages({
         action,
         hasCustomCommitMessage: !!commitMessage?.trim(),
-        hasWorkingTreeChanges: !!actionStatus?.hasWorkingTreeChanges,
+        hasWorkingTreeChanges: hasCommitChanges,
         featureBranch,
         shouldPushBeforePr:
           action === "create_pr" &&
@@ -633,7 +690,7 @@ export default function GitActionsControl({
         action,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
-        ...(filePaths ? { filePaths } : {}),
+        ...(actionFilePaths ? { filePaths: actionFilePaths } : {}),
         onProgress: applyProgressEvent,
       });
 
@@ -741,19 +798,39 @@ export default function GitActionsControl({
     });
   };
 
+  const resetCommitDialogState = () => {
+    setIsCommitDialogOpen(false);
+    setDialogCommitMessage("");
+    setDialogCommitScope(defaultCommitScope);
+    setExcludedFiles(new Set());
+    setIsEditingFiles(false);
+  };
+
+  const resolveDialogFilePaths = () => {
+    const selectedFilePaths = selectedFiles.map((file) => file.path);
+    if (dialogCommitScope === "thread") {
+      return selectedFilePaths;
+    }
+    return allSelected ? undefined : selectedFilePaths;
+  };
+
+  const updateDialogCommitScope = (scope: GitCommitScope) => {
+    setDialogCommitScope(scope);
+    setExcludedFiles(new Set());
+    setIsEditingFiles(false);
+  };
+
   const runDialogActionOnNewBranch = () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
+    const filePaths = resolveDialogFilePaths();
 
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
+    resetCommitDialogState();
 
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...(filePaths ? { filePaths } : {}),
       featureBranch: true,
       skipDefaultBranchPrompt: true,
     });
@@ -816,6 +893,7 @@ export default function GitActionsControl({
       void runGitActionWithToast({ action: "create_pr" });
       return;
     }
+    setDialogCommitScope(defaultCommitScope);
     setExcludedFiles(new Set());
     setIsEditingFiles(false);
     setIsCommitDialogOpen(true);
@@ -824,14 +902,12 @@ export default function GitActionsControl({
   const runDialogAction = () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
+    const filePaths = resolveDialogFilePaths();
+    resetCommitDialogState();
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...(filePaths ? { filePaths } : {}),
     });
   };
 
@@ -995,10 +1071,7 @@ export default function GitActionsControl({
         open={isCommitDialogOpen}
         onOpenChange={(open) => {
           if (!open) {
-            setIsCommitDialogOpen(false);
-            setDialogCommitMessage("");
-            setExcludedFiles(new Set());
-            setIsEditingFiles(false);
+            resetCommitDialogState();
           }
         }}
       >
@@ -1008,6 +1081,35 @@ export default function GitActionsControl({
             <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-xs font-medium">Commit scope</p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <Group aria-label="Commit scope">
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    data-pressed={dialogCommitScope === "thread" ? "" : undefined}
+                    onClick={() => updateDialogCommitScope("thread")}
+                  >
+                    {GIT_COMMIT_SCOPE_LABELS.thread}
+                  </Button>
+                  <GroupSeparator />
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    data-pressed={dialogCommitScope === "all" ? "" : undefined}
+                    onClick={() => updateDialogCommitScope("all")}
+                  >
+                    {GIT_COMMIT_SCOPE_LABELS.all}
+                  </Button>
+                </Group>
+                <p className="text-xs text-muted-foreground/70">
+                  {GIT_COMMIT_SCOPE_DESCRIPTIONS[dialogCommitScope]}
+                </p>
+              </div>
+            </div>
             <div className="space-y-3 rounded-lg border border-input bg-muted/40 p-3 text-xs">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
                 <span className="text-muted-foreground">Branch</span>
@@ -1023,13 +1125,15 @@ export default function GitActionsControl({
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    {isEditingFiles && allFiles.length > 0 && (
+                    {isEditingFiles && dialogScopeFiles.length > 0 && (
                       <Checkbox
                         checked={allSelected}
                         indeterminate={!allSelected && !noneSelected}
                         onCheckedChange={() => {
                           setExcludedFiles(
-                            allSelected ? new Set(allFiles.map((f) => f.path)) : new Set(),
+                            allSelected
+                              ? new Set(dialogScopeFiles.map((file) => file.path))
+                              : new Set(),
                           );
                         }}
                       />
@@ -1037,11 +1141,11 @@ export default function GitActionsControl({
                     <span className="text-muted-foreground">Files</span>
                     {!allSelected && !isEditingFiles && (
                       <span className="text-muted-foreground">
-                        ({selectedFiles.length} of {allFiles.length})
+                        ({selectedFiles.length} of {dialogScopeFiles.length})
                       </span>
                     )}
                   </div>
-                  {allFiles.length > 0 && (
+                  {dialogScopeFiles.length > 0 && (
                     <Button
                       variant="ghost"
                       size="xs"
@@ -1051,13 +1155,17 @@ export default function GitActionsControl({
                     </Button>
                   )}
                 </div>
-                {!gitStatusForActions || allFiles.length === 0 ? (
-                  <p className="font-medium">none</p>
+                {!gitStatusForActions || dialogScopeFiles.length === 0 ? (
+                  <p className="font-medium">
+                    {dialogCommitScope === "thread" && allFiles.length > 0
+                      ? "No changed files from this thread"
+                      : "none"}
+                  </p>
                 ) : (
                   <div className="space-y-2">
                     <ScrollArea className="h-44 rounded-md border border-input bg-background">
                       <div className="space-y-1 p-1">
-                        {allFiles.map((file) => {
+                        {dialogScopeFiles.map((file) => {
                           const isExcluded = excludedFiles.has(file.path);
                           return (
                             <div
@@ -1135,10 +1243,7 @@ export default function GitActionsControl({
               variant="outline"
               size="sm"
               onClick={() => {
-                setIsCommitDialogOpen(false);
-                setDialogCommitMessage("");
-                setExcludedFiles(new Set());
-                setIsEditingFiles(false);
+                resetCommitDialogState();
               }}
             >
               Cancel

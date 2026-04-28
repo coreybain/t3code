@@ -330,6 +330,7 @@ type ChatViewProps =
       environmentId: EnvironmentId;
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
+      onTerminalLiveHeightChange?: ((height: number) => void) | undefined;
       reserveTitleBarControlInset?: boolean;
       mainContentRightInset?: string | undefined;
       routeKind: "server";
@@ -339,6 +340,7 @@ type ChatViewProps =
       environmentId: EnvironmentId;
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
+      onTerminalLiveHeightChange?: ((height: number) => void) | undefined;
       reserveTitleBarControlInset?: boolean;
       mainContentRightInset?: string | undefined;
       routeKind: "draft";
@@ -448,6 +450,7 @@ interface PersistentThreadTerminalDrawerProps {
     label: string,
   ) => void;
   terminalRenameRequest?: { terminalId: string; requestId: number } | undefined;
+  onLiveHeightChange?: ((height: number) => void) | undefined;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
@@ -467,6 +470,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   onExternalTerminalRename,
   onExternalTerminalLabelChange,
   terminalRenameRequest,
+  onLiveHeightChange,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
@@ -642,6 +646,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         terminalRenameRequest={terminalRenameRequest}
         onCloseTerminal={closeTerminal}
         onHeightChange={setTerminalHeight}
+        onLiveHeightChange={onLiveHeightChange}
         onAddTerminalContext={handleAddTerminalContext}
       />
     </div>
@@ -654,6 +659,7 @@ export default function ChatView(props: ChatViewProps) {
     threadId,
     routeKind,
     onDiffPanelOpen,
+    onTerminalLiveHeightChange,
     mainContentRightInset,
     reserveTitleBarControlInset = true,
   } = props;
@@ -4167,6 +4173,7 @@ export default function ChatView(props: ChatViewProps) {
               : undefined
           }
           onAddTerminalContext={addTerminalContextToDraft}
+          onLiveHeightChange={onTerminalLiveHeightChange}
         />
       ))}
       {shouldUsePlanSidebarSheet ? (

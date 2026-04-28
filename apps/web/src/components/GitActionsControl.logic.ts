@@ -3,7 +3,9 @@ import type {
   GitStackedAction,
   GitStatusResult,
 } from "@t3tools/contracts";
+import type { GitCommitScope } from "@t3tools/contracts/settings";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import type { TurnDiffSummary } from "../types";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -24,6 +26,31 @@ export interface GitQuickAction {
   kind: "run_action" | "run_pull" | "open_pr" | "show_hint";
   action?: GitStackedAction;
   hint?: string;
+}
+
+export function collectThreadChangedFilePaths(
+  turnDiffSummaries: ReadonlyArray<Pick<TurnDiffSummary, "files">> | undefined,
+): Set<string> {
+  const filePaths = new Set<string>();
+  for (const summary of turnDiffSummaries ?? []) {
+    for (const file of summary.files) {
+      if (file.path.trim().length > 0) {
+        filePaths.add(file.path);
+      }
+    }
+  }
+  return filePaths;
+}
+
+export function resolveCommitScopeFiles(input: {
+  scope: GitCommitScope;
+  workingTreeFiles: GitStatusResult["workingTree"]["files"];
+  threadChangedFilePaths: ReadonlySet<string>;
+}): GitStatusResult["workingTree"]["files"] {
+  if (input.scope === "all") {
+    return input.workingTreeFiles;
+  }
+  return input.workingTreeFiles.filter((file) => input.threadChangedFilePaths.has(file.path));
 }
 
 export interface DefaultBranchActionDialogCopy {

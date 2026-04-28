@@ -28,6 +28,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime";
 import { Schema } from "effect";
 import { useServerAvailableEditors } from "~/rpc/serverState";
 import { getLocalStorageItem } from "~/hooks/useLocalStorage";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const FileTreePanel = lazy(() => import("../components/FileTreePanel"));
@@ -162,6 +163,7 @@ const LazyFileTreePanel = (props: React.ComponentProps<typeof FileTreePanel>) =>
 };
 
 const DiffPanelInlineSidebar = (props: {
+  bottomInset: string;
   diffOpen: boolean;
   fixedRightOffset: string;
   onCloseDiff: () => void;
@@ -171,6 +173,7 @@ const DiffPanelInlineSidebar = (props: {
   width: string;
 }) => {
   const {
+    bottomInset,
     diffOpen,
     fixedRightOffset,
     onCloseDiff,
@@ -246,7 +249,7 @@ const DiffPanelInlineSidebar = (props: {
           {
             "--sidebar-fixed-right-offset": fixedRightOffset,
             top: CHAT_HEADER_HEIGHT,
-            height: `calc(100svh - ${CHAT_HEADER_HEIGHT})`,
+            height: `calc(100svh - ${CHAT_HEADER_HEIGHT} - ${bottomInset})`,
           } as React.CSSProperties
         }
         resizable={{
@@ -264,6 +267,7 @@ const DiffPanelInlineSidebar = (props: {
 };
 
 const FileTreePanelInlineSidebar = (props: {
+  bottomInset: string;
   fileTreeOpen: boolean;
   onCloseFileTree: () => void;
   onOpenFileTree: () => void;
@@ -271,8 +275,15 @@ const FileTreePanelInlineSidebar = (props: {
   width: string;
   children: React.ReactNode;
 }) => {
-  const { fileTreeOpen, onCloseFileTree, onOpenFileTree, onResizeFileTree, width, children } =
-    props;
+  const {
+    bottomInset,
+    fileTreeOpen,
+    onCloseFileTree,
+    onOpenFileTree,
+    onResizeFileTree,
+    width,
+    children,
+  } = props;
   const onOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
@@ -300,7 +311,7 @@ const FileTreePanelInlineSidebar = (props: {
         style={
           {
             top: CHAT_HEADER_HEIGHT,
-            height: `calc(100svh - ${CHAT_HEADER_HEIGHT})`,
+            height: `calc(100svh - ${CHAT_HEADER_HEIGHT} - ${bottomInset})`,
           } as React.CSSProperties
         }
         resizable={{
@@ -358,6 +369,16 @@ function ChatThreadRouteView() {
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
   const diffOpen = search.diff === "1";
   const fileTreeOpen = search.fileTree === "1";
+  const terminalOpen = useTerminalStateStore(
+    (state) => selectThreadTerminalState(state.terminalStateByThreadKey, threadRef).terminalOpen,
+  );
+  const terminalHeight = useTerminalStateStore(
+    (state) => selectThreadTerminalState(state.terminalStateByThreadKey, threadRef).terminalHeight,
+  );
+  const [liveTerminalHeight, setLiveTerminalHeight] = useState<number | null>(null);
+  const terminalBottomInset = terminalOpen
+    ? formatPixelWidth(liveTerminalHeight ?? terminalHeight)
+    : "0px";
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const [diffInlineSidebarWidth, setDiffInlineSidebarWidth] = useState(() =>
     getInitialInlineSidebarWidth({
@@ -542,6 +563,10 @@ function ChatThreadRouteView() {
   );
 
   useEffect(() => {
+    setLiveTerminalHeight(null);
+  }, [currentThreadKey, terminalOpen]);
+
+  useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
       return;
     }
@@ -600,11 +625,13 @@ function ChatThreadRouteView() {
             threadId={threadRef.threadId}
             mainContentRightInset={mainContentRightInset}
             onDiffPanelOpen={markDiffOpened}
+            onTerminalLiveHeightChange={setLiveTerminalHeight}
             reserveTitleBarControlInset={!diffOpen && !fileTreeOpen}
             routeKind="server"
           />
         </SidebarInset>
         <DiffPanelInlineSidebar
+          bottomInset={terminalBottomInset}
           diffOpen={diffOpen}
           fixedRightOffset={fileTreeOpen ? fileTreeInlineSidebarWidth : "0px"}
           onCloseDiff={closeDiff}
@@ -614,6 +641,7 @@ function ChatThreadRouteView() {
           width={diffInlineSidebarWidth}
         />
         <FileTreePanelInlineSidebar
+          bottomInset={terminalBottomInset}
           fileTreeOpen={fileTreeOpen}
           onCloseFileTree={closeFileTree}
           onOpenFileTree={openFileTree}
@@ -633,13 +661,18 @@ function ChatThreadRouteView() {
           environmentId={threadRef.environmentId}
           threadId={threadRef.threadId}
           onDiffPanelOpen={markDiffOpened}
+          onTerminalLiveHeightChange={setLiveTerminalHeight}
           routeKind="server"
         />
       </SidebarInset>
-      <RightPanelSheet open={diffOpen} onClose={closeDiff}>
+      <RightPanelSheet bottomInset={terminalBottomInset} open={diffOpen} onClose={closeDiff}>
         {shouldRenderDiffContent && !fileTreeOpen ? <LazyDiffPanel mode="sheet" /> : null}
       </RightPanelSheet>
-      <RightPanelSheet open={fileTreeOpen} onClose={closeFileTree}>
+      <RightPanelSheet
+        bottomInset={terminalBottomInset}
+        open={fileTreeOpen}
+        onClose={closeFileTree}
+      >
         {fileTreeOpen ? fileTreeContent : null}
       </RightPanelSheet>
     </>

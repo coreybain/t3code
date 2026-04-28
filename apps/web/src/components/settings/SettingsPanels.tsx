@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import type { GitCommitScope } from "@t3tools/contracts/settings";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
@@ -104,6 +105,11 @@ const FOLLOW_UP_SEND_MODE_LABELS = {
   queue: "Queue",
   steer: "Steer",
 } as const;
+
+const GIT_COMMIT_SCOPE_LABELS: Record<GitCommitScope, string> = {
+  thread: "Thread changes",
+  all: "All changes",
+};
 
 type InstallProviderSettings = {
   provider: ProviderKind;
@@ -486,6 +492,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.followUpSendMode !== DEFAULT_UNIFIED_SETTINGS.followUpSendMode
         ? ["Follow-up submit"]
         : []),
+      ...(settings.gitCommitScope !== DEFAULT_UNIFIED_SETTINGS.gitCommitScope
+        ? ["Git commit scope"]
+        : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
@@ -512,6 +521,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.followUpSendMode,
+      settings.gitCommitScope,
       settings.timestampFormat,
       theme,
     ],
@@ -991,6 +1001,45 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="steer">
                   {FOLLOW_UP_SEND_MODE_LABELS.steer}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Git commit scope"
+          description="Choose what the Git commit action includes by default."
+          resetAction={
+            settings.gitCommitScope !== DEFAULT_UNIFIED_SETTINGS.gitCommitScope ? (
+              <SettingResetButton
+                label="git commit scope"
+                onClick={() =>
+                  updateSettings({
+                    gitCommitScope: DEFAULT_UNIFIED_SETTINGS.gitCommitScope,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.gitCommitScope}
+              onValueChange={(value) => {
+                if (value === "thread" || value === "all") {
+                  updateSettings({ gitCommitScope: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Git commit scope">
+                <SelectValue>{GIT_COMMIT_SCOPE_LABELS[settings.gitCommitScope]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="thread">
+                  {GIT_COMMIT_SCOPE_LABELS.thread}
+                </SelectItem>
+                <SelectItem hideIndicator value="all">
+                  {GIT_COMMIT_SCOPE_LABELS.all}
                 </SelectItem>
               </SelectPopup>
             </Select>

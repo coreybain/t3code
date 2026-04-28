@@ -856,6 +856,7 @@ interface ThreadTerminalDrawerProps {
   ) => void;
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
+  onLiveHeightChange?: ((height: number) => void) | undefined;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   terminalRenameRequest?: { terminalId: string; requestId: number } | undefined;
   keybindings: ResolvedKeybindingsConfig;
@@ -950,6 +951,7 @@ export default function ThreadTerminalDrawer({
   onExternalTerminalLabelChange,
   onCloseTerminal,
   onHeightChange,
+  onLiveHeightChange,
   onAddTerminalContext,
   terminalRenameRequest,
   keybindings,
@@ -967,6 +969,7 @@ export default function ThreadTerminalDrawer({
   const drawerHeightRef = useRef(drawerHeight);
   const lastSyncedHeightRef = useRef(clampDrawerHeight(height));
   const onHeightChangeRef = useRef(onHeightChange);
+  const onLiveHeightChangeRef = useRef(onLiveHeightChange);
   const lastHandledRenameRequestIdRef = useRef(0);
   const terminalNameClickTimeoutsRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const resizeStateRef = useRef<{
@@ -1233,6 +1236,10 @@ export default function ThreadTerminalDrawer({
     onHeightChangeRef.current = onHeightChange;
   }, [onHeightChange]);
 
+  useEffect(() => {
+    onLiveHeightChangeRef.current = onLiveHeightChange;
+  }, [onLiveHeightChange]);
+
   useEffect(
     () => () => {
       for (const timeout of terminalNameClickTimeoutsRef.current.values()) {
@@ -1259,6 +1266,7 @@ export default function ThreadTerminalDrawer({
     setDrawerHeight(clampedHeight);
     drawerHeightRef.current = clampedHeight;
     lastSyncedHeightRef.current = clampedHeight;
+    onLiveHeightChangeRef.current?.(clampedHeight);
   }, [height, threadId]);
 
   const handleResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1286,6 +1294,7 @@ export default function ThreadTerminalDrawer({
     didResizeDuringDragRef.current = true;
     drawerHeightRef.current = clampedHeight;
     setDrawerHeight(clampedHeight);
+    onLiveHeightChangeRef.current?.(clampedHeight);
   }, []);
 
   const handleResizePointerEnd = useCallback(
@@ -1316,6 +1325,7 @@ export default function ThreadTerminalDrawer({
       if (changed) {
         setDrawerHeight(clampedHeight);
         drawerHeightRef.current = clampedHeight;
+        onLiveHeightChangeRef.current?.(clampedHeight);
       }
       if (!resizeStateRef.current) {
         syncHeight(clampedHeight);

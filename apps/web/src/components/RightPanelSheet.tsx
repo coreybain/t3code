@@ -5,6 +5,7 @@ import { Sheet, SheetPopup } from "./ui/sheet";
 
 export function RightPanelSheet(props: {
   children: ReactNode;
+  bottomInset?: string;
   open: boolean;
   onClose: () => void;
 }) {
@@ -22,6 +23,7 @@ export function RightPanelSheet(props: {
         showCloseButton={false}
         keepMounted
         className={RIGHT_PANEL_SHEET_CLASS_NAME}
+        style={props.bottomInset ? { height: `calc(100svh - ${props.bottomInset})` } : undefined}
       >
         {props.children}
       </SheetPopup>

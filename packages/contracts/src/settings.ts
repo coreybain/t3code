@@ -18,6 +18,10 @@ export const FollowUpSendMode = Schema.Literals(["queue", "steer"]);
 export type FollowUpSendMode = typeof FollowUpSendMode.Type;
 export const DEFAULT_FOLLOW_UP_SEND_MODE: FollowUpSendMode = "queue";
 
+export const GitCommitScope = Schema.Literals(["thread", "all"]);
+export type GitCommitScope = typeof GitCommitScope.Type;
+export const DEFAULT_GIT_COMMIT_SCOPE: GitCommitScope = "thread";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -41,6 +45,9 @@ export const ClientSettingsSchema = Schema.Struct({
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   followUpSendMode: FollowUpSendMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_FOLLOW_UP_SEND_MODE)),
+  ),
+  gitCommitScope: GitCommitScope.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_GIT_COMMIT_SCOPE)),
   ),
   favorites: Schema.Array(
     Schema.Struct({
@@ -256,6 +263,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffWordWrap: Schema.optionalKey(Schema.Boolean),
   followUpSendMode: Schema.optionalKey(FollowUpSendMode),
+  gitCommitScope: Schema.optionalKey(GitCommitScope),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({

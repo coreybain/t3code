@@ -3,7 +3,9 @@ import { assert, describe, it } from "vitest";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  collectThreadChangedFilePaths,
   requiresDefaultBranchConfirmation,
+  resolveCommitScopeFiles,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
@@ -30,6 +32,49 @@ function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
     ...overrides,
   };
 }
+
+describe("commit scope files", () => {
+  it("collects unique changed file paths from thread turn summaries", () => {
+    const paths = collectThreadChangedFilePaths([
+      { files: [{ path: "src/a.ts" }, { path: "src/b.ts" }] },
+      { files: [{ path: "src/a.ts" }, { path: "src/c.ts" }] },
+    ]);
+
+    assert.deepEqual([...paths], ["src/a.ts", "src/b.ts", "src/c.ts"]);
+  });
+
+  it("filters working tree files to thread changes for thread scope", () => {
+    const files = [
+      { path: "src/a.ts", insertions: 1, deletions: 0 },
+      { path: "src/outside.ts", insertions: 4, deletions: 2 },
+    ];
+
+    assert.deepEqual(
+      resolveCommitScopeFiles({
+        scope: "thread",
+        workingTreeFiles: files,
+        threadChangedFilePaths: new Set(["src/a.ts"]),
+      }),
+      [{ path: "src/a.ts", insertions: 1, deletions: 0 }],
+    );
+  });
+
+  it("keeps all working tree files for all scope", () => {
+    const files = [
+      { path: "src/a.ts", insertions: 1, deletions: 0 },
+      { path: "src/outside.ts", insertions: 4, deletions: 2 },
+    ];
+
+    assert.strictEqual(
+      resolveCommitScopeFiles({
+        scope: "all",
+        workingTreeFiles: files,
+        threadChangedFilePaths: new Set(["src/a.ts"]),
+      }),
+      files,
+    );
+  });
+});
 
 describe("when: branch is clean and has an open PR", () => {
   it("resolveQuickAction opens the existing PR", () => {

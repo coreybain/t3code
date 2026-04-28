@@ -54,6 +54,7 @@ const clientSettings: ClientSettings = {
   confirmThreadDelete: false,
   diffWordWrap: true,
   followUpSendMode: "queue",
+  gitCommitScope: "all",
   favorites: [],
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {

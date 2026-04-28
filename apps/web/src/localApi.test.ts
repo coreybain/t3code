@@ -534,6 +534,7 @@ describe("wsApi", () => {
       confirmThreadDelete: false,
       diffWordWrap: true,
       followUpSendMode: "queue" as const,
+      gitCommitScope: "all" as const,
       favorites: [],
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
@@ -594,6 +595,7 @@ describe("wsApi", () => {
       confirmThreadDelete: false,
       diffWordWrap: true,
       followUpSendMode: "queue" as const,
+      gitCommitScope: "all" as const,
       favorites: [],
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {

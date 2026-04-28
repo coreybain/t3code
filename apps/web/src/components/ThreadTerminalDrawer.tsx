@@ -1,5 +1,16 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
+import {
+  Check,
+  MessageSquare,
+  PanelRightClose,
+  PanelRightOpen,
+  Pencil,
+  Plus,
+  SquareSplitHorizontal,
+  TerminalSquare,
+  Trash2,
+  XIcon,
+} from "lucide-react";
 import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -9,6 +20,9 @@ import {
 } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
+  type ChangeEvent,
+  type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -801,12 +815,17 @@ export function TerminalViewport({
 interface ThreadTerminalDrawerProps {
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
+  projectName: string;
   cwd: string;
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
   visible?: boolean;
   height: number;
+  terminalPanelOpen: boolean;
   terminalIds: string[];
+  terminalLabelsById: Record<string, string>;
+  runningTerminalIds: string[];
+  externalTerminalSections: TerminalPanelThreadSection[];
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
@@ -817,10 +836,41 @@ interface ThreadTerminalDrawerProps {
   newShortcutLabel?: string | undefined;
   closeShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
+  onTerminalRename: (terminalId: string, label: string) => void;
+  onTerminalPanelOpenChange: (open: boolean) => void;
+  onExternalTerminalClose: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  onExternalTerminalReturn: (
+    threadKey: string,
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+  ) => void;
+  onExternalTerminalRename: (
+    threadKey: string,
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+  ) => void;
+  onExternalTerminalLabelChange: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    label: string,
+  ) => void;
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  terminalRenameRequest?: { terminalId: string; requestId: number } | undefined;
   keybindings: ResolvedKeybindingsConfig;
+}
+
+export interface TerminalPanelThreadSection {
+  threadKey: string;
+  threadRef: ScopedThreadRef;
+  title: string;
+  projectName: string;
+  terminalIds: string[];
+  terminalGroups: ThreadTerminalGroup[];
+  terminalLabelsById: Record<string, string>;
+  runningTerminalIds: string[];
+  activeTerminalId: string;
 }
 
 interface TerminalActionButtonProps {
@@ -831,23 +881,39 @@ interface TerminalActionButtonProps {
 }
 
 function TerminalActionButton({ label, className, onClick, children }: TerminalActionButtonProps) {
+  const [suppressTooltip, setSuppressTooltip] = useState(false);
+  const handleClick = useCallback(() => {
+    setSuppressTooltip(true);
+    onClick();
+  }, [onClick]);
+
   return (
     <Popover>
       <PopoverTrigger
         openOnHover
-        render={<button type="button" className={className} onClick={onClick} aria-label={label} />}
+        render={
+          <button
+            type="button"
+            className={className}
+            onClick={handleClick}
+            onPointerLeave={() => setSuppressTooltip(false)}
+            aria-label={label}
+          />
+        }
       >
         {children}
       </PopoverTrigger>
-      <PopoverPopup
-        tooltipStyle
-        side="bottom"
-        sideOffset={6}
-        align="center"
-        className="pointer-events-none select-none"
-      >
-        {label}
-      </PopoverPopup>
+      {!suppressTooltip && (
+        <PopoverPopup
+          tooltipStyle
+          side="bottom"
+          sideOffset={6}
+          align="center"
+          className="pointer-events-none select-none"
+        >
+          {label}
+        </PopoverPopup>
+      )}
     </Popover>
   );
 }
@@ -855,12 +921,17 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
 export default function ThreadTerminalDrawer({
   threadRef,
   threadId,
+  projectName,
   cwd,
   worktreePath,
   runtimeEnv,
   visible = true,
   height,
+  terminalPanelOpen,
   terminalIds,
+  terminalLabelsById,
+  runningTerminalIds,
+  externalTerminalSections,
   activeTerminalId,
   terminalGroups,
   activeTerminalGroupId,
@@ -871,16 +942,33 @@ export default function ThreadTerminalDrawer({
   newShortcutLabel,
   closeShortcutLabel,
   onActiveTerminalChange,
+  onTerminalRename,
+  onTerminalPanelOpenChange,
+  onExternalTerminalClose,
+  onExternalTerminalReturn,
+  onExternalTerminalRename,
+  onExternalTerminalLabelChange,
   onCloseTerminal,
   onHeightChange,
   onAddTerminalContext,
+  terminalRenameRequest,
   keybindings,
 }: ThreadTerminalDrawerProps) {
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
   const [resizeEpoch, setResizeEpoch] = useState(0);
+  const [renamingTerminalId, setRenamingTerminalId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renamingExternalTerminal, setRenamingExternalTerminal] = useState<{
+    threadKey: string;
+    threadRef: ScopedThreadRef;
+    terminalId: string;
+  } | null>(null);
+  const [externalRenameDraft, setExternalRenameDraft] = useState("");
   const drawerHeightRef = useRef(drawerHeight);
   const lastSyncedHeightRef = useRef(clampDrawerHeight(height));
   const onHeightChangeRef = useRef(onHeightChange);
+  const lastHandledRenameRequestIdRef = useRef(0);
+  const terminalNameClickTimeoutsRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const resizeStateRef = useRef<{
     pointerId: number;
     startY: number;
@@ -975,18 +1063,37 @@ export default function ThreadTerminalDrawer({
   const visibleTerminalIds = resolvedTerminalGroups[resolvedActiveGroupIndex]?.terminalIds ?? [
     resolvedActiveTerminalId,
   ];
-  const hasTerminalSidebar = normalizedTerminalIds.length > 1;
+  const terminalPanelTerminalCount =
+    normalizedTerminalIds.length +
+    externalTerminalSections.reduce((count, section) => count + section.terminalIds.length, 0);
   const isSplitView = visibleTerminalIds.length > 1;
-  const showGroupHeaders =
-    resolvedTerminalGroups.length > 1 ||
-    resolvedTerminalGroups.some((terminalGroup) => terminalGroup.terminalIds.length > 1);
   const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
   const terminalLabelById = useMemo(
     () =>
       new Map(
-        normalizedTerminalIds.map((terminalId, index) => [terminalId, `Terminal ${index + 1}`]),
+        normalizedTerminalIds.map((terminalId, index) => [
+          terminalId,
+          terminalLabelsById[terminalId]?.trim() ||
+            (terminalId === DEFAULT_THREAD_TERMINAL_ID
+              ? `Terminal ${index + 1}`
+              : projectName.trim() || `Terminal ${index + 1}`),
+        ]),
       ),
-    [normalizedTerminalIds],
+    [normalizedTerminalIds, projectName, terminalLabelsById],
+  );
+  const runningTerminalIdSet = useMemo(() => new Set(runningTerminalIds), [runningTerminalIds]);
+  const resolveTerminalLabel = useCallback(
+    (options: {
+      terminalId: string;
+      index: number;
+      projectName: string;
+      labelsById: Record<string, string>;
+    }) =>
+      options.labelsById[options.terminalId]?.trim() ||
+      (options.terminalId === DEFAULT_THREAD_TERMINAL_ID
+        ? `Terminal ${options.index + 1}`
+        : options.projectName.trim() || `Terminal ${options.index + 1}`),
+    [],
   );
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal (max ${MAX_TERMINALS_PER_GROUP} per group)`
@@ -1006,10 +1113,135 @@ export default function ThreadTerminalDrawer({
   const onNewTerminalAction = useCallback(() => {
     onNewTerminal();
   }, [onNewTerminal]);
+  const startRenamingTerminal = useCallback(
+    (terminalId: string) => {
+      setRenamingTerminalId(terminalId);
+      setRenameDraft(terminalLabelById.get(terminalId) ?? "");
+    },
+    [terminalLabelById],
+  );
+  const cancelTerminalRename = useCallback(() => {
+    setRenamingTerminalId(null);
+    setRenameDraft("");
+  }, []);
+  const startRenamingExternalTerminal = useCallback(
+    (section: TerminalPanelThreadSection, terminalId: string, label: string) => {
+      setRenamingExternalTerminal({
+        threadKey: section.threadKey,
+        threadRef: section.threadRef,
+        terminalId,
+      });
+      setExternalRenameDraft(label);
+    },
+    [],
+  );
+  const cancelExternalTerminalRename = useCallback(() => {
+    setRenamingExternalTerminal(null);
+    setExternalRenameDraft("");
+  }, []);
+  const submitTerminalRename = useCallback(
+    (terminalId: string) => {
+      onTerminalRename(terminalId, renameDraft);
+      setRenamingTerminalId(null);
+      setRenameDraft("");
+    },
+    [onTerminalRename, renameDraft],
+  );
+  const submitExternalTerminalRename = useCallback(() => {
+    if (!renamingExternalTerminal) return;
+    onExternalTerminalLabelChange(
+      renamingExternalTerminal.threadRef,
+      renamingExternalTerminal.terminalId,
+      externalRenameDraft,
+    );
+    setRenamingExternalTerminal(null);
+    setExternalRenameDraft("");
+  }, [externalRenameDraft, onExternalTerminalLabelChange, renamingExternalTerminal]);
+  const handleRenameDraftChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setRenameDraft(event.target.value);
+  }, []);
+  const handleExternalRenameDraftChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setExternalRenameDraft(event.target.value);
+  }, []);
+  const handleRenameInputKeyDown = useCallback(
+    (terminalId: string, event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitTerminalRename(terminalId);
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelTerminalRename();
+      }
+    },
+    [cancelTerminalRename, submitTerminalRename],
+  );
+  const handleExternalRenameInputKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitExternalTerminalRename();
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelExternalTerminalRename();
+      }
+    },
+    [cancelExternalTerminalRename, submitExternalTerminalRename],
+  );
+  const clearTerminalNameClickTimeout = useCallback((clickKey: string) => {
+    const timeout = terminalNameClickTimeoutsRef.current.get(clickKey);
+    if (!timeout) return;
+    clearTimeout(timeout);
+    terminalNameClickTimeoutsRef.current.delete(clickKey);
+  }, []);
+  const handleTerminalNameClick = useCallback(
+    (
+      event: ReactMouseEvent<HTMLSpanElement>,
+      clickKey: string,
+      onSingleClick: () => void,
+      onDoubleClick: () => void,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.detail >= 2) {
+        clearTerminalNameClickTimeout(clickKey);
+        onDoubleClick();
+        return;
+      }
+
+      clearTerminalNameClickTimeout(clickKey);
+      const timeout = setTimeout(() => {
+        terminalNameClickTimeoutsRef.current.delete(clickKey);
+        onSingleClick();
+      }, 220);
+      terminalNameClickTimeoutsRef.current.set(clickKey, timeout);
+    },
+    [clearTerminalNameClickTimeout],
+  );
+
+  useEffect(() => {
+    if (!visible || !terminalRenameRequest) return;
+    if (lastHandledRenameRequestIdRef.current === terminalRenameRequest.requestId) return;
+    if (!normalizedTerminalIds.includes(terminalRenameRequest.terminalId)) return;
+    lastHandledRenameRequestIdRef.current = terminalRenameRequest.requestId;
+    startRenamingTerminal(terminalRenameRequest.terminalId);
+  }, [normalizedTerminalIds, startRenamingTerminal, terminalRenameRequest, visible]);
 
   useEffect(() => {
     onHeightChangeRef.current = onHeightChange;
   }, [onHeightChange]);
+
+  useEffect(
+    () => () => {
+      for (const timeout of terminalNameClickTimeoutsRef.current.values()) {
+        clearTimeout(timeout);
+      }
+      terminalNameClickTimeoutsRef.current.clear();
+    },
+    [],
+  );
 
   useEffect(() => {
     drawerHeightRef.current = drawerHeight;
@@ -1104,6 +1336,12 @@ export default function ThreadTerminalDrawer({
   }, [visible]);
 
   useEffect(() => {
+    if (renamingTerminalId !== null && !normalizedTerminalIds.includes(renamingTerminalId)) {
+      cancelTerminalRename();
+    }
+  }, [cancelTerminalRename, normalizedTerminalIds, renamingTerminalId]);
+
+  useEffect(() => {
     return () => {
       syncHeight(drawerHeightRef.current);
     };
@@ -1122,42 +1360,54 @@ export default function ThreadTerminalDrawer({
         onPointerCancel={handleResizePointerEnd}
       />
 
-      {!hasTerminalSidebar && (
-        <div className="pointer-events-none absolute right-2 top-2 z-20">
-          <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
-            <TerminalActionButton
-              className={`p-1 text-foreground/90 transition-colors ${
-                hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                  : "hover:bg-accent"
-              }`}
-              onClick={onSplitTerminalAction}
-              label={splitTerminalActionLabel}
-            >
-              <SquareSplitHorizontal className="size-3.25" />
-            </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
-            <TerminalActionButton
-              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
-              onClick={onNewTerminalAction}
-              label={newTerminalActionLabel}
-            >
-              <Plus className="size-3.25" />
-            </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
-            <TerminalActionButton
-              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
-              onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
-              label={closeTerminalActionLabel}
-            >
-              <Trash2 className="size-3.25" />
-            </TerminalActionButton>
-          </div>
+      <div className="pointer-events-none absolute right-2 top-2 z-40">
+        <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70 backdrop-blur">
+          <TerminalActionButton
+            className={`p-1 text-foreground/90 transition-colors ${
+              hasReachedSplitLimit
+                ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                : "hover:bg-accent"
+            }`}
+            onClick={onSplitTerminalAction}
+            label={splitTerminalActionLabel}
+          >
+            <SquareSplitHorizontal className="size-3.25" />
+          </TerminalActionButton>
+          <div className="h-4 w-px bg-border/80" />
+          <TerminalActionButton
+            className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+            onClick={onNewTerminalAction}
+            label={newTerminalActionLabel}
+          >
+            <Plus className="size-3.25" />
+          </TerminalActionButton>
+          <div className="h-4 w-px bg-border/80" />
+          <TerminalActionButton
+            className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+            onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+            label={closeTerminalActionLabel}
+          >
+            <Trash2 className="size-3.25" />
+          </TerminalActionButton>
+          <div className="h-4 w-px bg-border/80" />
+          <TerminalActionButton
+            className={`p-1 text-foreground/90 transition-colors hover:bg-accent ${
+              terminalPanelOpen ? "bg-accent" : ""
+            }`}
+            onClick={() => onTerminalPanelOpenChange(!terminalPanelOpen)}
+            label={terminalPanelOpen ? "Hide terminal list" : "Show terminal list"}
+          >
+            {terminalPanelOpen ? (
+              <PanelRightClose className="size-3.25" />
+            ) : (
+              <PanelRightOpen className="size-3.25" />
+            )}
+          </TerminalActionButton>
         </div>
-      )}
+      </div>
 
       <div className="min-h-0 w-full flex-1">
-        <div className={`flex h-full min-h-0 ${hasTerminalSidebar ? "gap-1.5" : ""}`}>
+        <div className="flex h-full min-h-0">
           <div className="min-w-0 flex-1">
             {isSplitView ? (
               <div
@@ -1221,132 +1471,378 @@ export default function ThreadTerminalDrawer({
               </div>
             )}
           </div>
+        </div>
+      </div>
 
-          {hasTerminalSidebar && (
-            <aside className="flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10">
-              <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
-                <div className="inline-flex h-full items-stretch">
-                  <TerminalActionButton
-                    className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
-                      hasReachedSplitLimit
-                        ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                        : "hover:bg-accent/70"
-                    }`}
-                    onClick={onSplitTerminalAction}
-                    label={splitTerminalActionLabel}
-                  >
-                    <SquareSplitHorizontal className="size-3.25" />
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={onNewTerminalAction}
-                    label={newTerminalActionLabel}
-                  >
-                    <Plus className="size-3.25" />
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
-                    label={closeTerminalActionLabel}
-                  >
-                    <Trash2 className="size-3.25" />
-                  </TerminalActionButton>
-                </div>
+      <div className="pointer-events-none absolute inset-y-0 right-0 z-30 flex justify-end overflow-hidden">
+        <aside
+          className={`pointer-events-auto flex h-full min-w-64 w-[min(25vw,360px)] flex-col border-l border-border/80 bg-background/95 shadow-xl backdrop-blur transition-transform duration-200 ease-out ${
+            terminalPanelOpen ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="flex min-h-10 items-center justify-between border-b border-border/80 px-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">Terminals</div>
+              <div className="text-xs text-muted-foreground">
+                {terminalPanelTerminalCount} active
               </div>
+            </div>
+            <button
+              type="button"
+              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground"
+              onClick={() => onTerminalPanelOpenChange(false)}
+              aria-label="Close terminal list"
+            >
+              <XIcon className="size-3.5" />
+            </button>
+          </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
-                {resolvedTerminalGroups.map((terminalGroup, groupIndex) => {
-                  const isGroupActive =
-                    terminalGroup.terminalIds.includes(resolvedActiveTerminalId);
-                  const groupActiveTerminalId = isGroupActive
-                    ? resolvedActiveTerminalId
-                    : (terminalGroup.terminalIds[0] ?? resolvedActiveTerminalId);
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1">
+            {resolvedTerminalGroups.map((terminalGroup, groupIndex) => {
+              const isGroupActive = terminalGroup.terminalIds.includes(resolvedActiveTerminalId);
+              const groupActiveTerminalId = isGroupActive
+                ? resolvedActiveTerminalId
+                : (terminalGroup.terminalIds[0] ?? resolvedActiveTerminalId);
+              const isSplitGroup = terminalGroup.terminalIds.length > 1;
+              const splitGroupNumber = resolvedTerminalGroups
+                .slice(0, groupIndex + 1)
+                .filter((group) => group.terminalIds.length > 1).length;
 
-                  return (
-                    <div key={terminalGroup.id} className="pb-0.5">
-                      {showGroupHeaders && (
-                        <button
-                          type="button"
-                          className={`flex w-full items-center rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
-                            isGroupActive
-                              ? "bg-accent/70 text-foreground"
+              return (
+                <div key={terminalGroup.id} className="pb-0.5">
+                  {isSplitGroup && (
+                    <button
+                      type="button"
+                      className={`mb-0.5 flex w-full items-center rounded px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
+                        isGroupActive
+                          ? "bg-accent/70 text-foreground"
+                          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                      }`}
+                      onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
+                    >
+                      {`Split ${splitGroupNumber}`}
+                    </button>
+                  )}
+
+                  <div className={isSplitGroup ? "border-l border-border/60 pl-2" : ""}>
+                    {terminalGroup.terminalIds.map((terminalId) => {
+                      const isActive = terminalId === resolvedActiveTerminalId;
+                      const isRunning = runningTerminalIdSet.has(terminalId);
+                      const label = terminalLabelById.get(terminalId) ?? "Terminal";
+                      const closeTerminalLabel = `Close ${label}${
+                        isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""
+                      }`;
+                      const isRenaming = renamingTerminalId === terminalId;
+                      return (
+                        <div
+                          key={terminalId}
+                          className={`group flex items-center gap-2 rounded-md px-2 py-0.5 text-sm ${
+                            isActive
+                              ? "bg-accent text-foreground"
                               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                           }`}
-                          onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
                         >
-                          {terminalGroup.terminalIds.length > 1
-                            ? `Split ${groupIndex + 1}`
-                            : `Terminal ${groupIndex + 1}`}
-                        </button>
-                      )}
-
-                      <div
-                        className={showGroupHeaders ? "ml-1 border-l border-border/60 pl-1.5" : ""}
-                      >
-                        {terminalGroup.terminalIds.map((terminalId) => {
-                          const isActive = terminalId === resolvedActiveTerminalId;
-                          const closeTerminalLabel = `Close ${
-                            terminalLabelById.get(terminalId) ?? "terminal"
-                          }${isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
-                          return (
-                            <div
-                              key={terminalId}
-                              className={`group flex items-center gap-1 rounded px-1 py-0.5 text-[11px] ${
-                                isActive
-                                  ? "bg-accent text-foreground"
-                                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                              }`}
+                          {isRenaming ? (
+                            <div className="flex min-w-0 flex-1 items-center gap-2">
+                              <TerminalSquare className="size-4 shrink-0" />
+                              <input
+                                autoFocus
+                                className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2 text-sm text-foreground outline-none focus:border-ring"
+                                value={renameDraft}
+                                onBlur={() => submitTerminalRename(terminalId)}
+                                onChange={handleRenameDraftChange}
+                                onClick={(event) => event.stopPropagation()}
+                                onKeyDown={(event) => handleRenameInputKeyDown(terminalId, event)}
+                              />
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                              onClick={() => onActiveTerminalChange(terminalId)}
                             >
-                              {showGroupHeaders && (
-                                <span className="text-[10px] text-muted-foreground/80">└</span>
+                              <TerminalSquare className="size-4 shrink-0" />
+                              <span
+                                className="min-w-0 flex-1 truncate"
+                                onClick={(event) =>
+                                  handleTerminalNameClick(
+                                    event,
+                                    `current:${terminalId}`,
+                                    () => onActiveTerminalChange(terminalId),
+                                    () => startRenamingTerminal(terminalId),
+                                  )
+                                }
+                              >
+                                {label}
+                              </span>
+                              {isRunning && (
+                                <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
                               )}
+                            </button>
+                          )}
+
+                          {isRenaming ? (
+                            <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
                               <button
                                 type="button"
-                                className="flex min-w-0 flex-1 items-center gap-1 text-left"
-                                onClick={() => onActiveTerminalChange(terminalId)}
+                                className="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => submitTerminalRename(terminalId)}
+                                aria-label={`Save ${label} name`}
                               >
-                                <TerminalSquare className="size-3 shrink-0" />
-                                <span className="truncate">
-                                  {terminalLabelById.get(terminalId) ?? "Terminal"}
-                                </span>
+                                <Check className="size-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={cancelTerminalRename}
+                                aria-label="Cancel terminal rename"
+                              >
+                                <XIcon className="size-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+                              <button
+                                type="button"
+                                className="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                onClick={() => startRenamingTerminal(terminalId)}
+                                aria-label={`Rename ${label}`}
+                              >
+                                <Pencil className="size-3.25" />
                               </button>
                               {normalizedTerminalIds.length > 1 && (
-                                <Popover>
-                                  <PopoverTrigger
-                                    openOnHover
-                                    render={
-                                      <button
-                                        type="button"
-                                        className="inline-flex size-3.5 items-center justify-center rounded text-xs font-medium leading-none text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                                        onClick={() => onCloseTerminal(terminalId)}
-                                        aria-label={closeTerminalLabel}
-                                      />
-                                    }
-                                  >
-                                    <XIcon className="size-2.5" />
-                                  </PopoverTrigger>
-                                  <PopoverPopup
-                                    tooltipStyle
-                                    side="bottom"
-                                    sideOffset={6}
-                                    align="center"
-                                    className="pointer-events-none select-none"
-                                  >
-                                    {closeTerminalLabel}
-                                  </PopoverPopup>
-                                </Popover>
+                                <button
+                                  type="button"
+                                  className="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                  onClick={() => onCloseTerminal(terminalId)}
+                                  aria-label={closeTerminalLabel}
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </button>
                               )}
                             </div>
-                          );
-                        })}
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
+            {externalTerminalSections.map((section) => {
+              const runningExternalTerminalIds = new Set(section.runningTerminalIds);
+              return (
+                <div key={section.threadKey} className="border-t border-border/70 pt-1 pb-0.5">
+                  <div className="truncate px-1.5 pb-0.5 text-xs font-medium text-foreground">
+                    {section.projectName}
+                    <span className="font-normal text-muted-foreground"> / {section.title}</span>
+                  </div>
+
+                  {section.terminalGroups.map((terminalGroup, groupIndex) => {
+                    const isGroupActive = terminalGroup.terminalIds.includes(
+                      section.activeTerminalId,
+                    );
+                    const groupActiveTerminalId = isGroupActive
+                      ? section.activeTerminalId
+                      : (terminalGroup.terminalIds[0] ?? section.activeTerminalId);
+                    const isSplitGroup = terminalGroup.terminalIds.length > 1;
+                    const splitGroupNumber = section.terminalGroups
+                      .slice(0, groupIndex + 1)
+                      .filter((group) => group.terminalIds.length > 1).length;
+
+                    return (
+                      <div key={`${section.threadKey}:${terminalGroup.id}`} className="pb-0.5">
+                        {isSplitGroup && (
+                          <button
+                            type="button"
+                            className={`mb-0.5 flex w-full items-center rounded px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
+                              isGroupActive
+                                ? "bg-accent/70 text-foreground"
+                                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                            }`}
+                            onClick={() =>
+                              onExternalTerminalReturn(
+                                section.threadKey,
+                                section.threadRef,
+                                groupActiveTerminalId,
+                              )
+                            }
+                          >
+                            {`Split ${splitGroupNumber}`}
+                          </button>
+                        )}
+
+                        <div className={isSplitGroup ? "border-l border-border/60 pl-2" : ""}>
+                          {terminalGroup.terminalIds.map((terminalId) => {
+                            const terminalIndex = section.terminalIds.indexOf(terminalId);
+                            const label = resolveTerminalLabel({
+                              terminalId,
+                              index: terminalIndex >= 0 ? terminalIndex : 0,
+                              projectName: section.projectName,
+                              labelsById: section.terminalLabelsById,
+                            });
+                            const isRunning = runningExternalTerminalIds.has(terminalId);
+                            const isActive = terminalId === section.activeTerminalId;
+                            const externalRenameKey = `external:${section.threadKey}:${terminalId}`;
+                            const isExternalRenaming =
+                              renamingExternalTerminal?.threadKey === section.threadKey &&
+                              renamingExternalTerminal.terminalId === terminalId;
+                            return (
+                              <div
+                                key={`${section.threadKey}:${terminalId}`}
+                                className={`group flex items-center gap-2 rounded-md px-2 py-0.5 text-sm ${
+                                  isActive
+                                    ? "bg-accent text-foreground"
+                                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                                }`}
+                                onClick={() =>
+                                  onExternalTerminalReturn(
+                                    section.threadKey,
+                                    section.threadRef,
+                                    terminalId,
+                                  )
+                                }
+                              >
+                                {isExternalRenaming ? (
+                                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                                    <TerminalSquare className="size-4 shrink-0" />
+                                    <input
+                                      autoFocus
+                                      className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2 text-sm text-foreground outline-none focus:border-ring"
+                                      value={externalRenameDraft}
+                                      onBlur={submitExternalTerminalRename}
+                                      onChange={handleExternalRenameDraftChange}
+                                      onClick={(event) => event.stopPropagation()}
+                                      onKeyDown={handleExternalRenameInputKeyDown}
+                                    />
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      onExternalTerminalReturn(
+                                        section.threadKey,
+                                        section.threadRef,
+                                        terminalId,
+                                      );
+                                    }}
+                                  >
+                                    <TerminalSquare className="size-4 shrink-0" />
+                                    <span
+                                      className="min-w-0 flex-1 truncate"
+                                      onClick={(event) =>
+                                        handleTerminalNameClick(
+                                          event,
+                                          externalRenameKey,
+                                          () =>
+                                            onExternalTerminalReturn(
+                                              section.threadKey,
+                                              section.threadRef,
+                                              terminalId,
+                                            ),
+                                          () =>
+                                            onExternalTerminalRename(
+                                              section.threadKey,
+                                              section.threadRef,
+                                              terminalId,
+                                            ),
+                                        )
+                                      }
+                                    >
+                                      {label}
+                                    </span>
+                                    {isRunning && (
+                                      <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
+                                    )}
+                                  </button>
+                                )}
+
+                                {isExternalRenaming ? (
+                                  <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+                                    <button
+                                      type="button"
+                                      className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                      onMouseDown={(event) => event.preventDefault()}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        submitExternalTerminalRename();
+                                      }}
+                                      aria-label={`Save ${label} name`}
+                                    >
+                                      <Check className="size-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                      onMouseDown={(event) => event.preventDefault()}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        cancelExternalTerminalRename();
+                                      }}
+                                      aria-label="Cancel terminal rename"
+                                    >
+                                      <XIcon className="size-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+                                    <button
+                                      type="button"
+                                      className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        clearTerminalNameClickTimeout(externalRenameKey);
+                                        startRenamingExternalTerminal(section, terminalId, label);
+                                      }}
+                                      aria-label={`Rename ${label}`}
+                                    >
+                                      <Pencil className="size-3.25" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        onExternalTerminalReturn(
+                                          section.threadKey,
+                                          section.threadRef,
+                                          terminalId,
+                                        );
+                                      }}
+                                      aria-label={`Back to ${section.title}`}
+                                    >
+                                      <MessageSquare className="size-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        onExternalTerminalClose(section.threadRef, terminalId);
+                                      }}
+                                      aria-label={`Close ${label}`}
+                                    >
+                                      <Trash2 className="size-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </aside>
-          )}
-        </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </aside>
       </div>
     </aside>
   );

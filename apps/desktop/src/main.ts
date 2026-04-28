@@ -175,6 +175,7 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
       label: sourceItem.label,
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
+      separatorBefore: sourceItem.separatorBefore === true,
     };
 
     if (sourceItem.children) {
@@ -1735,6 +1736,9 @@ function registerIpcHandlers(): void {
           const template: MenuItemConstructorOptions[] = [];
           let hasInsertedDestructiveSeparator = false;
           for (const item of entries) {
+            if (item.separatorBefore && template.length > 0) {
+              template.push({ type: "separator" });
+            }
             if (item.destructive && !hasInsertedDestructiveSeparator && template.length > 0) {
               template.push({ type: "separator" });
               hasInsertedDestructiveSeparator = true;

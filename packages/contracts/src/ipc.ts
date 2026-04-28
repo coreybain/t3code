@@ -60,6 +60,7 @@ export interface ContextMenuItem<T extends string = string> {
   label: string;
   destructive?: boolean;
   disabled?: boolean;
+  separatorBefore?: boolean;
   children?: readonly ContextMenuItem<T>[];
 }
 

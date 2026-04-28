@@ -21,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import {
   parseScopedThreadKey,
+  scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
@@ -101,7 +102,7 @@ import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
-import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+import ThreadTerminalDrawer, { type TerminalPanelThreadSection } from "./ThreadTerminalDrawer";
 import { ChevronDownIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -127,7 +128,7 @@ import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   useComposerDraftStore,
-  type DraftId,
+  DraftId,
 } from "../composerDraftStore";
 import {
   appendTerminalContextsToPrompt,
@@ -418,6 +419,24 @@ interface PersistentThreadTerminalDrawerProps {
   newShortcutLabel: string | undefined;
   closeShortcutLabel: string | undefined;
   keybindings: ResolvedKeybindingsConfig;
+  externalTerminalSections: TerminalPanelThreadSection[];
+  onExternalTerminalClose: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  onExternalTerminalReturn: (
+    threadKey: string,
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+  ) => void;
+  onExternalTerminalRename: (
+    threadKey: string,
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+  ) => void;
+  onExternalTerminalLabelChange: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    label: string,
+  ) => void;
+  terminalRenameRequest?: { terminalId: string; requestId: number } | undefined;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
@@ -431,6 +450,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   newShortcutLabel,
   closeShortcutLabel,
   keybindings,
+  externalTerminalSections,
+  onExternalTerminalClose,
+  onExternalTerminalReturn,
+  onExternalTerminalRename,
+  onExternalTerminalLabelChange,
+  terminalRenameRequest,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
@@ -445,9 +470,11 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     selectThreadTerminalState(state.terminalStateByThreadKey, threadRef),
   );
   const storeSetTerminalHeight = useTerminalStateStore((state) => state.setTerminalHeight);
+  const storeSetTerminalPanelOpen = useTerminalStateStore((state) => state.setTerminalPanelOpen);
   const storeSplitTerminal = useTerminalStateStore((state) => state.splitTerminal);
   const storeNewTerminal = useTerminalStateStore((state) => state.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((state) => state.setActiveTerminal);
+  const storeSetTerminalLabel = useTerminalStateStore((state) => state.setTerminalLabel);
   const storeCloseTerminal = useTerminalStateStore((state) => state.closeTerminal);
   const [localFocusRequestId, setLocalFocusRequestId] = useState(0);
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
@@ -511,6 +538,20 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [bumpFocusRequestId, storeSetActiveTerminal, threadRef],
   );
 
+  const renameTerminal = useCallback(
+    (terminalId: string, label: string) => {
+      storeSetTerminalLabel(threadRef, terminalId, label);
+    },
+    [storeSetTerminalLabel, threadRef],
+  );
+
+  const setTerminalPanelOpen = useCallback(
+    (open: boolean) => {
+      storeSetTerminalPanelOpen(threadRef, open);
+    },
+    [storeSetTerminalPanelOpen, threadRef],
+  );
+
   const closeTerminal = useCallback(
     (terminalId: string) => {
       const api = readEnvironmentApi(threadRef.environmentId);
@@ -559,12 +600,17 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       <ThreadTerminalDrawer
         threadRef={threadRef}
         threadId={threadId}
+        projectName={project.name}
         cwd={cwd}
         worktreePath={effectiveWorktreePath}
         runtimeEnv={runtimeEnv}
         visible={visible}
         height={terminalState.terminalHeight}
+        terminalPanelOpen={terminalState.terminalPanelOpen}
         terminalIds={terminalState.terminalIds}
+        terminalLabelsById={terminalState.terminalLabelsById}
+        runningTerminalIds={terminalState.runningTerminalIds}
+        externalTerminalSections={externalTerminalSections}
         activeTerminalId={terminalState.activeTerminalId}
         terminalGroups={terminalState.terminalGroups}
         activeTerminalGroupId={terminalState.activeTerminalGroupId}
@@ -576,6 +622,13 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         closeShortcutLabel={visible ? closeShortcutLabel : undefined}
         keybindings={keybindings}
         onActiveTerminalChange={activateTerminal}
+        onTerminalRename={renameTerminal}
+        onTerminalPanelOpenChange={setTerminalPanelOpen}
+        onExternalTerminalClose={onExternalTerminalClose}
+        onExternalTerminalReturn={onExternalTerminalReturn}
+        onExternalTerminalRename={onExternalTerminalRename}
+        onExternalTerminalLabelChange={onExternalTerminalLabelChange}
+        terminalRenameRequest={terminalRenameRequest}
         onCloseTerminal={closeTerminal}
         onHeightChange={setTerminalHeight}
         onAddTerminalContext={handleAddTerminalContext}
@@ -691,6 +744,11 @@ export default function ChatView(props: ChatViewProps) {
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
+  const [terminalRenameRequest, setTerminalRenameRequest] = useState<{
+    threadKey: string;
+    terminalId: string;
+    requestId: number;
+  } | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
   const [terminalLaunchContext, setTerminalLaunchContext] = useState<TerminalLaunchContext | null>(
@@ -714,27 +772,56 @@ export default function ChatView(props: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
 
-  const terminalState = useTerminalStateStore((state) =>
-    selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef),
+  const terminalStateByThreadKey = useTerminalStateStore((state) => state.terminalStateByThreadKey);
+  const terminalState = useMemo(
+    () => selectThreadTerminalState(terminalStateByThreadKey, routeThreadRef),
+    [routeThreadRef, terminalStateByThreadKey],
   );
-  const openTerminalThreadKeys = useTerminalStateStore(
-    useShallow((state) =>
-      Object.entries(state.terminalStateByThreadKey).flatMap(([nextThreadKey, nextTerminalState]) =>
-        nextTerminalState.terminalOpen ? [nextThreadKey] : [],
-      ),
-    ),
+  const openTerminalThreadKeys = useMemo(
+    () =>
+      Object.entries(terminalStateByThreadKey).flatMap(([nextThreadKey]) => {
+        const nextThreadRef = parseScopedThreadKey(nextThreadKey);
+        if (!nextThreadRef) return [];
+        return selectThreadTerminalState(terminalStateByThreadKey, nextThreadRef).terminalOpen
+          ? [nextThreadKey]
+          : [];
+      }),
+    [terminalStateByThreadKey],
   );
   const storeSetTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
   const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
+  const storeSetTerminalLabel = useTerminalStateStore((s) => s.setTerminalLabel);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
-  const serverThreadKeys = useStore(
-    useShallow((state) =>
-      selectThreadsAcrossEnvironments(state).map((thread) =>
+  const terminalPanelThreads = useStore(useShallow(selectThreadsAcrossEnvironments));
+  const terminalPanelProjects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const terminalPanelProjectsByKey = useMemo(
+    () =>
+      new Map(
+        terminalPanelProjects.map((project) => [
+          scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+          project,
+        ]),
+      ),
+    [terminalPanelProjects],
+  );
+  const terminalPanelServerThreadsByKey = useMemo(
+    () =>
+      new Map(
+        terminalPanelThreads.map((thread) => [
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          thread,
+        ]),
+      ),
+    [terminalPanelThreads],
+  );
+  const serverThreadKeys = useMemo(
+    () =>
+      terminalPanelThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    ),
+    [terminalPanelThreads],
   );
   const storeServerTerminalLaunchContext = useTerminalStateStore(
     (s) => s.terminalLaunchContextByThreadKey[scopedThreadKey(routeThreadRef)] ?? null,
@@ -747,6 +834,16 @@ export default function ChatView(props: ChatViewProps) {
     () =>
       Object.values(draftThreadsByThreadKey).map((draftThread) =>
         scopedThreadKey(scopeThreadRef(draftThread.environmentId, draftThread.threadId)),
+      ),
+    [draftThreadsByThreadKey],
+  );
+  const draftSessionsByThreadKey = useMemo(
+    () =>
+      new Map(
+        Object.entries(draftThreadsByThreadKey).map(([nextDraftId, draftThread]) => [
+          scopedThreadKey(scopeThreadRef(draftThread.environmentId, draftThread.threadId)),
+          { draftId: DraftId.make(nextDraftId), draftThread },
+        ]),
       ),
     [draftThreadsByThreadKey],
   );
@@ -803,6 +900,55 @@ export default function ChatView(props: ChatViewProps) {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
   }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
+  const externalTerminalSections = useMemo<TerminalPanelThreadSection[]>(
+    () =>
+      existingOpenTerminalThreadKeys.flatMap((nextThreadKey) => {
+        if (nextThreadKey === activeThreadKey) return [];
+        const nextThreadRef = parseScopedThreadKey(nextThreadKey);
+        if (!nextThreadRef) return [];
+        const nextTerminalState = selectThreadTerminalState(
+          terminalStateByThreadKey,
+          nextThreadRef,
+        );
+        if (!nextTerminalState.terminalOpen) return [];
+
+        const serverTerminalThread = terminalPanelServerThreadsByKey.get(nextThreadKey);
+        const draftSession = draftSessionsByThreadKey.get(nextThreadKey);
+        const projectRef = serverTerminalThread
+          ? scopeProjectRef(serverTerminalThread.environmentId, serverTerminalThread.projectId)
+          : draftSession
+            ? scopeProjectRef(
+                draftSession.draftThread.environmentId,
+                draftSession.draftThread.projectId,
+              )
+            : null;
+        const project = projectRef
+          ? terminalPanelProjectsByKey.get(scopedProjectKey(projectRef))
+          : undefined;
+
+        return [
+          {
+            threadKey: nextThreadKey,
+            threadRef: nextThreadRef,
+            title: serverTerminalThread?.title ?? "Draft thread",
+            projectName: project?.name ?? "Project",
+            terminalIds: nextTerminalState.terminalIds,
+            terminalGroups: nextTerminalState.terminalGroups,
+            terminalLabelsById: nextTerminalState.terminalLabelsById,
+            runningTerminalIds: nextTerminalState.runningTerminalIds,
+            activeTerminalId: nextTerminalState.activeTerminalId,
+          },
+        ];
+      }),
+    [
+      activeThreadKey,
+      draftSessionsByThreadKey,
+      existingOpenTerminalThreadKeys,
+      terminalPanelProjectsByKey,
+      terminalPanelServerThreadsByKey,
+      terminalStateByThreadKey,
+    ],
+  );
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const threadPlanCatalog = useThreadPlanCatalog(
     useMemo(() => {
@@ -1628,6 +1774,78 @@ export default function ChatView(props: ChatViewProps) {
       storeCloseTerminal,
       terminalState.terminalIds.length,
     ],
+  );
+  const closeExternalTerminal = useCallback(
+    (targetThreadRef: ScopedThreadRef, terminalId: string) => {
+      const api = readEnvironmentApi(targetThreadRef.environmentId);
+      if (!api) return;
+      const targetTerminalState = selectThreadTerminalState(
+        terminalStateByThreadKey,
+        targetThreadRef,
+      );
+      const isFinalTerminal = targetTerminalState.terminalIds.length <= 1;
+      const fallbackExitWrite = () =>
+        api.terminal
+          .write({ threadId: targetThreadRef.threadId, terminalId, data: "exit\n" })
+          .catch(() => undefined);
+      if ("close" in api.terminal && typeof api.terminal.close === "function") {
+        void (async () => {
+          if (isFinalTerminal) {
+            await api.terminal
+              .clear({ threadId: targetThreadRef.threadId, terminalId })
+              .catch(() => undefined);
+          }
+          await api.terminal.close({
+            threadId: targetThreadRef.threadId,
+            terminalId,
+            deleteHistory: true,
+          });
+        })().catch(() => fallbackExitWrite());
+      } else {
+        void fallbackExitWrite();
+      }
+      storeCloseTerminal(targetThreadRef, terminalId);
+    },
+    [storeCloseTerminal, terminalStateByThreadKey],
+  );
+  const returnToExternalTerminalThread = useCallback(
+    (targetThreadKey: string, targetThreadRef: ScopedThreadRef, terminalId: string) => {
+      storeSetActiveTerminal(targetThreadRef, terminalId);
+      storeSetTerminalOpen(targetThreadRef, true);
+      const draftSession = draftSessionsByThreadKey.get(targetThreadKey);
+      if (draftSession) {
+        void navigate({
+          to: "/draft/$draftId",
+          params: buildDraftThreadRouteParams(draftSession.draftId),
+        });
+        return;
+      }
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: targetThreadRef.environmentId,
+          threadId: targetThreadRef.threadId,
+        },
+      });
+    },
+    [draftSessionsByThreadKey, navigate, storeSetActiveTerminal, storeSetTerminalOpen],
+  );
+  const renameExternalTerminal = useCallback(
+    (targetThreadKey: string, targetThreadRef: ScopedThreadRef, terminalId: string) => {
+      setTerminalRenameRequest((current) => ({
+        threadKey: targetThreadKey,
+        terminalId,
+        requestId: (current?.requestId ?? 0) + 1,
+      }));
+      returnToExternalTerminalThread(targetThreadKey, targetThreadRef, terminalId);
+    },
+    [returnToExternalTerminalThread],
+  );
+  const renameExternalTerminalInPlace = useCallback(
+    (targetThreadRef: ScopedThreadRef, terminalId: string, label: string) => {
+      storeSetTerminalLabel(targetThreadRef, terminalId, label);
+    },
+    [storeSetTerminalLabel],
   );
   const runProjectScript = useCallback(
     async (
@@ -3477,6 +3695,21 @@ export default function ChatView(props: ChatViewProps) {
           newShortcutLabel={newTerminalShortcutLabel ?? undefined}
           closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
           keybindings={keybindings}
+          externalTerminalSections={
+            mountedThreadKey === activeThreadKey ? externalTerminalSections : []
+          }
+          onExternalTerminalClose={closeExternalTerminal}
+          onExternalTerminalReturn={returnToExternalTerminalThread}
+          onExternalTerminalRename={renameExternalTerminal}
+          onExternalTerminalLabelChange={renameExternalTerminalInPlace}
+          terminalRenameRequest={
+            terminalRenameRequest?.threadKey === mountedThreadKey
+              ? {
+                  terminalId: terminalRenameRequest.terminalId,
+                  requestId: terminalRenameRequest.requestId,
+                }
+              : undefined
+          }
           onAddTerminalContext={addTerminalContextToDraft}
         />
       ))}

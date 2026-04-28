@@ -74,8 +74,10 @@ describe("terminalStateStore actions", () => {
     );
     expect(terminalState).toEqual({
       terminalOpen: false,
+      terminalPanelOpen: false,
       terminalHeight: 280,
       terminalIds: ["default"],
+      terminalLabelsById: {},
       runningTerminalIds: [],
       activeTerminalId: "default",
       terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
@@ -174,6 +176,20 @@ describe("terminalStateStore actions", () => {
     ).toEqual(["default", "env-b-terminal"]);
   });
 
+  it("remembers terminal panel visibility separately from terminal drawer visibility", () => {
+    const store = useTerminalStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.setTerminalPanelOpen(THREAD_REF, true);
+    store.setTerminalOpen(THREAD_REF, false);
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalState.terminalOpen).toBe(false);
+    expect(terminalState.terminalPanelOpen).toBe(true);
+  });
+
   it("migrates v1 persisted terminal state using the stored version", () => {
     const migrated = migratePersistedTerminalStateStoreState(
       {
@@ -205,8 +221,10 @@ describe("terminalStateStore actions", () => {
       terminalStateByThreadKey: {
         [scopedThreadKey(THREAD_REF)]: {
           terminalOpen: true,
+          terminalPanelOpen: false,
           terminalHeight: 320,
           terminalIds: ["default"],
+          terminalLabelsById: {},
           runningTerminalIds: [],
           activeTerminalId: "default",
           terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],

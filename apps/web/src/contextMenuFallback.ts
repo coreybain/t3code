@@ -66,6 +66,13 @@ export function showContextMenuFallback<T extends string>(
       menu.dataset.level = String(level);
 
       for (const item of entries) {
+        if (item.separatorBefore && menu.childElementCount > 0) {
+          const separator = document.createElement("div");
+          separator.className = "my-1 h-px bg-border";
+          separator.setAttribute("role", "separator");
+          menu.appendChild(separator);
+        }
+
         const button = document.createElement("button");
         button.type = "button";
         const hasChildren = Array.isArray(item.children) && item.children.length > 0;

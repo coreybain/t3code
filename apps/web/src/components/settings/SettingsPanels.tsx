@@ -100,6 +100,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const FOLLOW_UP_SEND_MODE_LABELS = {
+  queue: "Queue",
+  steer: "Steer",
+} as const;
+
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
@@ -478,6 +483,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
+      ...(settings.followUpSendMode !== DEFAULT_UNIFIED_SETTINGS.followUpSendMode
+        ? ["Follow-up submit"]
+        : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
@@ -503,6 +511,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.followUpSendMode,
       settings.timestampFormat,
       theme,
     ],
@@ -946,6 +955,45 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Stream assistant messages"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Follow-up submit"
+          description="Choose what Enter does while a thread is working."
+          resetAction={
+            settings.followUpSendMode !== DEFAULT_UNIFIED_SETTINGS.followUpSendMode ? (
+              <SettingResetButton
+                label="follow-up submit"
+                onClick={() =>
+                  updateSettings({
+                    followUpSendMode: DEFAULT_UNIFIED_SETTINGS.followUpSendMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.followUpSendMode}
+              onValueChange={(value) => {
+                if (value === "queue" || value === "steer") {
+                  updateSettings({ followUpSendMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-36" aria-label="Follow-up submit mode">
+                <SelectValue>{FOLLOW_UP_SEND_MODE_LABELS[settings.followUpSendMode]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="queue">
+                  {FOLLOW_UP_SEND_MODE_LABELS.queue}
+                </SelectItem>
+                <SelectItem hideIndicator value="steer">
+                  {FOLLOW_UP_SEND_MODE_LABELS.steer}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 

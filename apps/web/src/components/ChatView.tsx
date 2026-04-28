@@ -127,6 +127,7 @@ import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  type PersistedComposerImageAttachment,
   useComposerDraftStore,
   DraftId,
 } from "../composerDraftStore";
@@ -136,6 +137,13 @@ import {
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
+import {
+  hydrateFollowUpMessageImages,
+  newQueuedFollowUpMessageId,
+  useFollowUpQueueStore,
+  type FollowUpSubmitMode,
+  type QueuedFollowUpMessage,
+} from "../followUpQueueStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
@@ -186,6 +194,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_QUEUED_FOLLOW_UPS: QueuedFollowUpMessage[] = [];
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 
@@ -770,6 +779,8 @@ export default function ChatView(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
+  const pendingSteerMessageRef = useRef<QueuedFollowUpMessage | null>(null);
+  const followUpDrainInFlightRef = useRef(false);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   const terminalStateByThreadKey = useTerminalStateStore((state) => state.terminalStateByThreadKey);
@@ -897,6 +908,21 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const queuedFollowUps = useFollowUpQueueStore((state) =>
+    activeThreadKey
+      ? (state.queueByThreadKey[activeThreadKey] ?? EMPTY_QUEUED_FOLLOW_UPS)
+      : EMPTY_QUEUED_FOLLOW_UPS,
+  );
+  const parkedComposerDraft = useFollowUpQueueStore((state) =>
+    activeThreadKey ? (state.parkedDraftByThreadKey[activeThreadKey] ?? null) : null,
+  );
+  const enqueueFollowUp = useFollowUpQueueStore((state) => state.enqueue);
+  const removeFollowUp = useFollowUpQueueStore((state) => state.remove);
+  const moveFollowUpUp = useFollowUpQueueStore((state) => state.moveUp);
+  const moveFollowUpDown = useFollowUpQueueStore((state) => state.moveDown);
+  const replaceFollowUpAt = useFollowUpQueueStore((state) => state.replaceAt);
+  const parkComposerDraft = useFollowUpQueueStore((state) => state.parkComposerDraft);
+  const clearParkedComposerDraft = useFollowUpQueueStore((state) => state.clearParkedDraft);
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
@@ -2658,7 +2684,101 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const restoreFollowUpMessageToComposer = useCallback(
+    (message: QueuedFollowUpMessage): boolean => {
+      if (!activeThread) return false;
+      const restoredImages = hydrateFollowUpMessageImages(message.attachments);
+      if (restoredImages.length !== message.attachments.length) {
+        setThreadError(activeThread.id, "Failed to restore one or more queued image attachments.");
+        return false;
+      }
+      promptRef.current = message.prompt;
+      composerImagesRef.current = restoredImages;
+      composerTerminalContextsRef.current = message.terminalContexts;
+      clearComposerDraftContent(composerDraftTarget);
+      setComposerDraftPrompt(composerDraftTarget, message.prompt);
+      addComposerDraftImages(composerDraftTarget, restoredImages);
+      setComposerDraftTerminalContexts(composerDraftTarget, message.terminalContexts);
+      setComposerDraftModelSelection(composerDraftTarget, message.modelSelection);
+      setComposerDraftRuntimeMode(composerDraftTarget, message.runtimeMode);
+      setComposerDraftInteractionMode(composerDraftTarget, message.interactionMode);
+      if (isLocalDraftThread) {
+        setDraftThreadContext(composerDraftTarget, {
+          runtimeMode: message.runtimeMode,
+          interactionMode: message.interactionMode,
+        });
+      }
+      composerRef.current?.resetCursorState({
+        cursor: collapseExpandedComposerCursor(message.prompt, message.prompt.length),
+        prompt: message.prompt,
+        detectTrigger: true,
+      });
+      scheduleComposerFocus();
+      return true;
+    },
+    [
+      activeThread,
+      addComposerDraftImages,
+      clearComposerDraftContent,
+      composerDraftTarget,
+      composerRef,
+      isLocalDraftThread,
+      scheduleComposerFocus,
+      setComposerDraftInteractionMode,
+      setComposerDraftModelSelection,
+      setComposerDraftPrompt,
+      setComposerDraftRuntimeMode,
+      setComposerDraftTerminalContexts,
+      setDraftThreadContext,
+      setThreadError,
+    ],
+  );
+
+  const buildFollowUpMessageFromComposer =
+    useCallback(async (): Promise<QueuedFollowUpMessage | null> => {
+      if (!activeThread || !activeThreadKey) return null;
+      const sendCtx = composerRef.current?.getSendContext();
+      if (!sendCtx) return null;
+      const promptForSend = promptRef.current;
+      const composerImages = sendCtx.images;
+      const composerTerminalContexts = sendCtx.terminalContexts;
+      const { hasSendableContent } = deriveComposerSendState({
+        prompt: promptForSend,
+        imageCount: composerImages.length,
+        terminalContexts: composerTerminalContexts,
+      });
+      if (!hasSendableContent) {
+        return null;
+      }
+      const attachments = await Promise.all(
+        composerImages.map(async (image) => ({
+          id: image.id,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+        })),
+      );
+      return {
+        id: newQueuedFollowUpMessageId(),
+        threadKey: activeThreadKey,
+        createdAt: new Date().toISOString(),
+        prompt: promptForSend,
+        attachments,
+        terminalContexts: composerTerminalContexts.map((context) => ({ ...context })),
+        modelSelection: sendCtx.selectedModelSelection,
+        selectedProvider: sendCtx.selectedProvider,
+        selectedModel: sendCtx.selectedModel,
+        selectedPromptEffort: sendCtx.selectedPromptEffort,
+        runtimeMode,
+        interactionMode,
+      };
+    }, [activeThread, activeThreadKey, composerRef, interactionMode, runtimeMode]);
+
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    options?: { followUpMode?: FollowUpSubmitMode; queuedMessage?: QueuedFollowUpMessage },
+  ) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
@@ -2666,7 +2786,23 @@ export default function ChatView(props: ChatViewProps) {
       onAdvanceActivePendingUserInput();
       return;
     }
-    const sendCtx = composerRef.current?.getSendContext();
+    const queuedMessage = options?.queuedMessage;
+    const sendCtx = queuedMessage
+      ? {
+          prompt: queuedMessage.prompt,
+          images: [] as ComposerImageAttachment[],
+          terminalContexts: queuedMessage.terminalContexts,
+          selectedPromptEffort: queuedMessage.selectedPromptEffort,
+          selectedModelOptionsForDispatch: queuedMessage.modelSelection.options,
+          selectedModelSelection: queuedMessage.modelSelection,
+          selectedProvider: queuedMessage.selectedProvider,
+          selectedModel: queuedMessage.selectedModel,
+          selectedProviderModels:
+            providerStatuses.find(
+              (provider) => provider.provider === queuedMessage.selectedProvider,
+            )?.models ?? [],
+        }
+      : composerRef.current?.getSendContext();
     if (!sendCtx) return;
     const {
       images: composerImages,
@@ -2677,7 +2813,7 @@ export default function ChatView(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
-    const promptForSend = promptRef.current;
+    const promptForSend = queuedMessage?.prompt ?? promptRef.current;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -2685,10 +2821,10 @@ export default function ChatView(props: ChatViewProps) {
       hasSendableContent,
     } = deriveComposerSendState({
       prompt: promptForSend,
-      imageCount: composerImages.length,
+      imageCount: queuedMessage?.attachments.length ?? composerImages.length,
       terminalContexts: composerTerminalContexts,
     });
-    if (showPlanFollowUpPrompt && activeProposedPlan) {
+    if (!queuedMessage && showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
@@ -2702,8 +2838,9 @@ export default function ChatView(props: ChatViewProps) {
       });
       return;
     }
-    const standaloneSlashCommand =
-      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
+    const standaloneSlashCommand = queuedMessage
+      ? null
+      : composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
@@ -2727,6 +2864,56 @@ export default function ChatView(props: ChatViewProps) {
           }),
         );
       }
+      return;
+    }
+    if (!queuedMessage && phase === "running") {
+      const followUpMode = options?.followUpMode ?? settings.followUpSendMode;
+      let attachments: PersistedComposerImageAttachment[];
+      try {
+        attachments = await Promise.all(
+          composerImages.map(async (image) => ({
+            id: image.id,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
+      } catch (err) {
+        setThreadError(
+          activeThread.id,
+          err instanceof Error ? err.message : "Failed to queue image attachment.",
+        );
+        return;
+      }
+      const followUpMessage: QueuedFollowUpMessage = {
+        id: newQueuedFollowUpMessageId(),
+        threadKey:
+          activeThreadKey ??
+          scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id)),
+        createdAt: new Date().toISOString(),
+        prompt: promptForSend,
+        attachments,
+        terminalContexts: composerTerminalContexts.map((context) => ({ ...context })),
+        modelSelection: ctxSelectedModelSelection,
+        selectedProvider: ctxSelectedProvider,
+        selectedModel: ctxSelectedModel,
+        selectedPromptEffort: ctxSelectedPromptEffort,
+        runtimeMode,
+        interactionMode,
+      };
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      if (followUpMode === "queue") {
+        enqueueFollowUp(
+          scopeThreadRef(activeThread.environmentId, activeThread.id),
+          followUpMessage,
+        );
+        return;
+      }
+      pendingSteerMessageRef.current = followUpMessage;
+      await onInterrupt();
       return;
     }
     if (!activeProject) return;
@@ -2764,23 +2951,42 @@ export default function ChatView(props: ChatViewProps) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
-    const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
-        type: "image" as const,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
-      })),
-    );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
+    const turnAttachmentsPromise = queuedMessage
+      ? Promise.resolve(
+          queuedMessage.attachments.map((attachment) => ({
+            type: "image" as const,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            dataUrl: attachment.dataUrl,
+          })),
+        )
+      : Promise.all(
+          composerImagesSnapshot.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
+    const optimisticAttachments = queuedMessage
+      ? queuedMessage.attachments.map((attachment) => ({
+          type: "image" as const,
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          previewUrl: attachment.dataUrl,
+        }))
+      : composerImagesSnapshot.map((image) => ({
+          type: "image" as const,
+          id: image.id,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          previewUrl: image.previewUrl,
+        }));
     // Scroll to the current end *before* adding the optimistic message.
     // This sets LegendList's internal isAtEnd=true so maintainScrollAtEnd
     // automatically pins to the new item when the data changes.
@@ -2815,9 +3021,11 @@ export default function ChatView(props: ChatViewProps) {
         }),
       );
     }
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
+    if (!queuedMessage) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+    }
 
     let turnStartSucceeded = false;
     await (async () => {
@@ -2862,8 +3070,8 @@ export default function ChatView(props: ChatViewProps) {
           threadId: threadIdForSend,
           createdAt: messageCreatedAt,
           ...(ctxSelectedModel ? { modelSelection: ctxSelectedModelSelection } : {}),
-          runtimeMode,
-          interactionMode,
+          runtimeMode: queuedMessage?.runtimeMode ?? runtimeMode,
+          interactionMode: queuedMessage?.interactionMode ?? interactionMode,
         });
       }
 
@@ -2877,8 +3085,8 @@ export default function ChatView(props: ChatViewProps) {
                       projectId: activeProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
-                      runtimeMode,
-                      interactionMode,
+                      runtimeMode: queuedMessage?.runtimeMode ?? runtimeMode,
+                      interactionMode: queuedMessage?.interactionMode ?? interactionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
@@ -2910,14 +3118,15 @@ export default function ChatView(props: ChatViewProps) {
         },
         modelSelection: ctxSelectedModelSelection,
         titleSeed: title,
-        runtimeMode,
-        interactionMode,
+        runtimeMode: queuedMessage?.runtimeMode ?? runtimeMode,
+        interactionMode: queuedMessage?.interactionMode ?? interactionMode,
         ...(bootstrap ? { bootstrap } : {}),
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
       if (
+        !queuedMessage &&
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
@@ -2952,7 +3161,13 @@ export default function ChatView(props: ChatViewProps) {
     sendInFlightRef.current = false;
     if (!turnStartSucceeded) {
       resetLocalDispatch();
+      return false;
     }
+    if (!queuedMessage && parkedComposerDraft && activeThreadRef) {
+      restoreFollowUpMessageToComposer(parkedComposerDraft.composerSnapshot);
+      clearParkedComposerDraft(activeThreadRef);
+    }
+    return true;
   };
 
   const onInterrupt = async () => {
@@ -2965,6 +3180,140 @@ export default function ChatView(props: ChatViewProps) {
       createdAt: new Date().toISOString(),
     });
   };
+
+  const onQueuedFollowUpEdit = useCallback(
+    async (message: QueuedFollowUpMessage, index: number) => {
+      if (!activeThreadRef) return;
+      const removed = removeFollowUp(activeThreadRef, message.id);
+      if (!removed) return;
+      const existingComposerSnapshot = await buildFollowUpMessageFromComposer().catch(
+        (err: unknown) => {
+          setThreadError(
+            activeThreadId,
+            err instanceof Error ? err.message : "Failed to preserve current draft.",
+          );
+          return null;
+        },
+      );
+      if (existingComposerSnapshot) {
+        parkComposerDraft(activeThreadRef, {
+          threadKey: scopedThreadKey(activeThreadRef),
+          createdAt: new Date().toISOString(),
+          originalQueueIndex: index,
+          editedQueueMessage: removed,
+          composerSnapshot: existingComposerSnapshot,
+        });
+      }
+      restoreFollowUpMessageToComposer(removed);
+    },
+    [
+      activeThreadId,
+      activeThreadRef,
+      buildFollowUpMessageFromComposer,
+      parkComposerDraft,
+      removeFollowUp,
+      restoreFollowUpMessageToComposer,
+      setThreadError,
+    ],
+  );
+
+  const onQueuedFollowUpSteer = useCallback(
+    async (message: QueuedFollowUpMessage) => {
+      if (!activeThreadRef) return;
+      const removed = removeFollowUp(activeThreadRef, message.id);
+      if (!removed) return;
+      if (phase === "running") {
+        pendingSteerMessageRef.current = removed;
+        await onInterrupt();
+        return;
+      }
+      void onSend(undefined, { queuedMessage: removed });
+    },
+    [activeThreadRef, onInterrupt, onSend, phase, removeFollowUp],
+  );
+
+  const onQueuedFollowUpMoveUp = useCallback(
+    (message: QueuedFollowUpMessage) => {
+      if (!activeThreadRef) return;
+      moveFollowUpUp(activeThreadRef, message.id);
+    },
+    [activeThreadRef, moveFollowUpUp],
+  );
+
+  const onQueuedFollowUpMoveDown = useCallback(
+    (message: QueuedFollowUpMessage) => {
+      if (!activeThreadRef) return;
+      moveFollowUpDown(activeThreadRef, message.id);
+    },
+    [activeThreadRef, moveFollowUpDown],
+  );
+
+  const onQueuedFollowUpDelete = useCallback(
+    (message: QueuedFollowUpMessage) => {
+      if (!activeThreadRef) return;
+      removeFollowUp(activeThreadRef, message.id);
+    },
+    [activeThreadRef, removeFollowUp],
+  );
+
+  const onParkedComposerDraftToggle = useCallback(() => {
+    if (!activeThreadRef || !parkedComposerDraft) return;
+    void buildFollowUpMessageFromComposer()
+      .catch(() => null)
+      .then((snapshot) => {
+        replaceFollowUpAt(
+          activeThreadRef,
+          parkedComposerDraft.originalQueueIndex,
+          snapshot ?? parkedComposerDraft.editedQueueMessage,
+        );
+        restoreFollowUpMessageToComposer(parkedComposerDraft.composerSnapshot);
+        clearParkedComposerDraft(activeThreadRef);
+      });
+  }, [
+    activeThreadRef,
+    buildFollowUpMessageFromComposer,
+    clearParkedComposerDraft,
+    parkedComposerDraft,
+    replaceFollowUpAt,
+    restoreFollowUpMessageToComposer,
+  ]);
+
+  useEffect(() => {
+    if (!activeThread || !activeThreadRef) return;
+    if (phase === "running" || isConnecting || isSendBusy || sendInFlightRef.current) return;
+    if (activePendingApproval || activePendingUserInput) return;
+    if (followUpDrainInFlightRef.current) return;
+
+    const steerMessage = pendingSteerMessageRef.current;
+    const queuedMessage = steerMessage ?? queuedFollowUps[0] ?? null;
+    if (!queuedMessage) return;
+
+    followUpDrainInFlightRef.current = true;
+    if (steerMessage) {
+      pendingSteerMessageRef.current = null;
+    }
+
+    void onSend(undefined, { queuedMessage })
+      .then((succeeded) => {
+        if (succeeded && !steerMessage) {
+          removeFollowUp(activeThreadRef, queuedMessage.id);
+        }
+      })
+      .finally(() => {
+        followUpDrainInFlightRef.current = false;
+      });
+  }, [
+    activePendingApproval,
+    activePendingUserInput,
+    activeThread,
+    activeThreadRef,
+    isConnecting,
+    isSendBusy,
+    onSend,
+    phase,
+    queuedFollowUps,
+    removeFollowUp,
+  ]);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -3661,6 +4010,8 @@ export default function ChatView(props: ChatViewProps) {
               keybindings={keybindings}
               terminalOpen={Boolean(terminalState.terminalOpen)}
               gitCwd={gitCwd}
+              queuedFollowUps={queuedFollowUps}
+              hasParkedComposerDraft={parkedComposerDraft !== null}
               promptRef={promptRef}
               composerImagesRef={composerImagesRef}
               composerTerminalContextsRef={composerTerminalContextsRef}
@@ -3669,6 +4020,12 @@ export default function ChatView(props: ChatViewProps) {
               onSend={onSend}
               onInterrupt={onInterrupt}
               onImplementPlanInNewThread={onImplementPlanInNewThread}
+              onQueuedFollowUpEdit={onQueuedFollowUpEdit}
+              onQueuedFollowUpSteer={onQueuedFollowUpSteer}
+              onQueuedFollowUpMoveUp={onQueuedFollowUpMoveUp}
+              onQueuedFollowUpMoveDown={onQueuedFollowUpMoveDown}
+              onQueuedFollowUpDelete={onQueuedFollowUpDelete}
+              onParkedComposerDraftToggle={onParkedComposerDraftToggle}
               onRespondToApproval={onRespondToApproval}
               onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
               onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}

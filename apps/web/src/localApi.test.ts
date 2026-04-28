@@ -533,6 +533,7 @@ describe("wsApi", () => {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,
+      followUpSendMode: "queue" as const,
       favorites: [],
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
@@ -592,6 +593,7 @@ describe("wsApi", () => {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,
+      followUpSendMode: "queue" as const,
       favorites: [],
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {

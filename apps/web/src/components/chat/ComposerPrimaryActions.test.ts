@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import { formatPendingPrimaryActionLabel, getRunningPrimaryAction } from "./ComposerPrimaryActions";
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {
@@ -89,5 +89,34 @@ describe("formatPendingPrimaryActionLabel", () => {
         questionIndex: 5,
       }),
     ).toBe("Submit answers");
+  });
+});
+
+describe("getRunningPrimaryAction", () => {
+  it("shows stop when running without composer content", () => {
+    expect(
+      getRunningPrimaryAction({ hasSendableContent: false, followUpSendMode: "queue" }),
+    ).toMatchObject({
+      kind: "stop",
+      ariaLabel: "Stop generation",
+    });
+  });
+
+  it("shows queue when running with content in queue mode", () => {
+    expect(
+      getRunningPrimaryAction({ hasSendableContent: true, followUpSendMode: "queue" }),
+    ).toMatchObject({
+      kind: "queue",
+      ariaLabel: "Queue follow-up message",
+    });
+  });
+
+  it("shows steer when running with content in steer mode", () => {
+    expect(
+      getRunningPrimaryAction({ hasSendableContent: true, followUpSendMode: "steer" }),
+    ).toMatchObject({
+      kind: "steer",
+      ariaLabel: "Steer with follow-up message",
+    });
   });
 });

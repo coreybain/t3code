@@ -14,6 +14,10 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+export const FollowUpSendMode = Schema.Literals(["queue", "steer"]);
+export type FollowUpSendMode = typeof FollowUpSendMode.Type;
+export const DEFAULT_FOLLOW_UP_SEND_MODE: FollowUpSendMode = "queue";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -35,6 +39,9 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  followUpSendMode: FollowUpSendMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_FOLLOW_UP_SEND_MODE)),
+  ),
   favorites: Schema.Array(
     Schema.Struct({
       provider: ProviderKind,
@@ -248,6 +255,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffWordWrap: Schema.optionalKey(Schema.Boolean),
+  followUpSendMode: Schema.optionalKey(FollowUpSendMode),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({

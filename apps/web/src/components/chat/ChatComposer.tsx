@@ -68,6 +68,7 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
+import { QueuedFollowUpStack } from "./QueuedFollowUpStack";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -78,7 +79,7 @@ import {
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../vscode-icons";
-import { cn, randomUUID } from "~/lib/utils";
+import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -107,8 +108,19 @@ import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
+import type { FollowUpSubmitMode, QueuedFollowUpMessage } from "../../followUpQueueStore";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
+
+function oppositeFollowUpMode(mode: FollowUpSubmitMode): FollowUpSubmitMode {
+  return mode === "queue" ? "steer" : "queue";
+}
+
+function isFollowUpAlternateSubmit(event: KeyboardEvent): boolean {
+  return isMacPlatform(navigator.platform)
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
+}
 
 const runtimeModeConfig: Record<
   RuntimeMode,
@@ -286,6 +298,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isSendBusy: boolean;
   isConnecting: boolean;
   hasSendableContent: boolean;
+  followUpSendMode: FollowUpSubmitMode;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -306,6 +319,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isConnecting={props.isConnecting}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
+        followUpSendMode={props.followUpSendMode}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
@@ -420,6 +434,8 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  queuedFollowUps: QueuedFollowUpMessage[];
+  hasParkedComposerDraft: boolean;
 
   // Refs the parent needs kept in sync
   promptRef: React.MutableRefObject<string>;
@@ -431,9 +447,18 @@ export interface ChatComposerProps {
   scheduleStickToBottom: () => void;
 
   // Callbacks
-  onSend: (e?: { preventDefault: () => void }) => void;
+  onSend: (
+    e?: { preventDefault: () => void },
+    options?: { followUpMode?: FollowUpSubmitMode },
+  ) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
+  onQueuedFollowUpEdit: (message: QueuedFollowUpMessage, index: number) => void;
+  onQueuedFollowUpSteer: (message: QueuedFollowUpMessage) => void;
+  onQueuedFollowUpMoveUp: (message: QueuedFollowUpMessage) => void;
+  onQueuedFollowUpMoveDown: (message: QueuedFollowUpMessage) => void;
+  onQueuedFollowUpDelete: (message: QueuedFollowUpMessage) => void;
+  onParkedComposerDraftToggle: () => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -509,6 +534,8 @@ export const ChatComposer = memo(
       keybindings,
       terminalOpen,
       gitCwd,
+      queuedFollowUps,
+      hasParkedComposerDraft,
       promptRef,
       composerImagesRef,
       composerTerminalContextsRef,
@@ -517,6 +544,12 @@ export const ChatComposer = memo(
       onSend,
       onInterrupt,
       onImplementPlanInNewThread,
+      onQueuedFollowUpEdit,
+      onQueuedFollowUpSteer,
+      onQueuedFollowUpMoveUp,
+      onQueuedFollowUpMoveDown,
+      onQueuedFollowUpDelete,
+      onParkedComposerDraftToggle,
       onRespondToApproval,
       onSelectActivePendingUserInputOption,
       onAdvanceActivePendingUserInput,
@@ -827,7 +860,7 @@ export const ChatComposer = memo(
         return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
       }
       if (phase === "running") {
-        return "running";
+        return `running:${composerSendState.hasSendableContent}:${settings.followUpSendMode}`;
       }
       if (showPlanFollowUpPrompt) {
         return prompt.trim().length > 0 ? "plan:refine" : "plan:implement";
@@ -842,6 +875,7 @@ export const ChatComposer = memo(
       isSendBusy,
       phase,
       prompt,
+      settings.followUpSendMode,
       showPlanFollowUpPrompt,
     ]);
 
@@ -1470,7 +1504,10 @@ export const ChatComposer = memo(
         }
       }
       if (key === "Enter" && !event.shiftKey) {
-        void onSend();
+        const followUpMode = isFollowUpAlternateSubmit(event)
+          ? oppositeFollowUpMode(settings.followUpSendMode)
+          : settings.followUpSendMode;
+        void onSend(undefined, { followUpMode });
         return true;
       }
       return false;
@@ -1697,6 +1734,17 @@ export const ChatComposer = memo(
         className="mx-auto w-full min-w-0 max-w-208"
         data-chat-composer-form="true"
       >
+        <div className="mx-auto w-[calc(100%-1.25rem)] max-w-[calc(100%-1.25rem)]">
+          <QueuedFollowUpStack
+            messages={queuedFollowUps}
+            onEdit={onQueuedFollowUpEdit}
+            onSteer={onQueuedFollowUpSteer}
+            onMoveUp={onQueuedFollowUpMoveUp}
+            onMoveDown={onQueuedFollowUpMoveDown}
+            onDelete={onQueuedFollowUpDelete}
+          />
+        </div>
+
         <div
           className={cn(
             "group rounded-[22px] p-px transition-colors duration-200",
@@ -1887,6 +1935,19 @@ export const ChatComposer = memo(
                 )}
               >
                 <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {hasParkedComposerDraft ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 shrink-0 rounded-full px-2.5 text-xs"
+                      onClick={onParkedComposerDraftToggle}
+                      title="Restore parked draft"
+                    >
+                      Draft
+                    </Button>
+                  ) : null}
+
                   <ProviderModelPicker
                     compact={isComposerFooterCompact}
                     provider={selectedProvider}
@@ -1971,6 +2032,7 @@ export const ChatComposer = memo(
                     isConnecting={isConnecting}
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
+                    followUpSendMode={settings.followUpSendMode}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}

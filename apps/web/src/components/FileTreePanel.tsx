@@ -253,7 +253,7 @@ const FileTreeRow = memo(function FileTreeRow(props: FileTreeRowProps) {
 export default function FileTreePanel(props: {
   mode: FileTreePanelMode;
   environmentId: EnvironmentId;
-  cwd: string;
+  cwd: string | null;
   availableEditors: ReadonlyArray<EditorId>;
   gitStatus?: GitStatusResult | null;
   onClose: () => void;
@@ -279,6 +279,7 @@ export default function FileTreePanel(props: {
   const { resolvedTheme } = useTheme();
   const gitStatusState = useGitStatus({ environmentId, cwd });
   const gitStatus = providedGitStatus ?? gitStatusState.data;
+  const hasProjectCwd = cwd !== null;
   const theme = resolvedTheme === "dark" ? "dark" : "light";
   const allFilesQuery = useQuery({
     queryKey: ["project-list-entries", environmentId, cwd],
@@ -287,10 +288,13 @@ export default function FileTreePanel(props: {
       if (!api) {
         throw new Error("Environment API is unavailable.");
       }
+      if (!cwd) {
+        throw new Error("Select a project to browse files.");
+      }
       return api.projects.listEntries({ cwd, limit: WORKSPACE_LIST_LIMIT });
     },
     staleTime: 15_000,
-    enabled: viewMode === "all",
+    enabled: hasProjectCwd && viewMode === "all",
   });
   const allTree = useMemo(
     () => buildProjectEntryTree(allFilesQuery.data?.entries ?? []),
@@ -378,7 +382,7 @@ export default function FileTreePanel(props: {
   const openWithEditor = useCallback(
     async (path: string, editor: EditorId | null) => {
       const api = readLocalApi();
-      if (!api) return;
+      if (!api || !cwd) return;
       const targetPath = resolvePathLinkTarget(path, cwd);
       try {
         if (editor) {
@@ -451,6 +455,7 @@ export default function FileTreePanel(props: {
     ],
   );
 
+  const isProjectUnavailable = !hasProjectCwd;
   const isChangedUnavailable = viewMode === "changed" && gitStatus && !gitStatus.isRepo;
   const isLoading = viewMode === "all" && allFilesQuery.isLoading;
   const error =
@@ -483,7 +488,9 @@ export default function FileTreePanel(props: {
           Showing the first {WORKSPACE_LIST_LIMIT.toLocaleString()} entries.
         </div>
       ) : null}
-      {isLoading ? (
+      {isProjectUnavailable ? (
+        <FileTreeStatus icon>Select a project to browse files.</FileTreeStatus>
+      ) : isLoading ? (
         <FileTreeStatus>Loading files...</FileTreeStatus>
       ) : error ? (
         <FileTreeStatus icon>{error}</FileTreeStatus>

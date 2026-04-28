@@ -313,15 +313,19 @@ function ChatThreadRouteView() {
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).bootstrapComplete,
   );
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
-  const activeProject = useStore((store) =>
-    serverThread
-      ? selectProjectByRef(
-          store,
-          scopeProjectRef(serverThread.environmentId, serverThread.projectId),
-        )
-      : undefined,
+  const draftThread = useComposerDraftStore((store) =>
+    threadRef ? store.getDraftThreadByRef(threadRef) : null,
   );
-  const activeCwd = serverThread?.worktreePath ?? activeProject?.cwd ?? null;
+  const activeProject = useStore((store) => {
+    const projectRef = serverThread
+      ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+      : draftThread
+        ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
+        : null;
+    return projectRef ? selectProjectByRef(store, projectRef) : undefined;
+  });
+  const activeCwd =
+    serverThread?.worktreePath ?? draftThread?.worktreePath ?? activeProject?.cwd ?? null;
   const availableEditors = useServerAvailableEditors();
   const threadExists = useStore((store) => selectThreadExistsByRef(store, threadRef));
   const environmentHasServerThreads = useStore(
@@ -329,9 +333,6 @@ function ChatThreadRouteView() {
   );
   const draftThreadExists = useComposerDraftStore((store) =>
     threadRef ? store.getDraftThreadByRef(threadRef) !== null : false,
-  );
-  const draftThread = useComposerDraftStore((store) =>
-    threadRef ? store.getDraftThreadByRef(threadRef) : null,
   );
   const environmentHasDraftThreads = useComposerDraftStore((store) => {
     if (!threadRef) {
@@ -557,18 +558,17 @@ function ChatThreadRouteView() {
   }
 
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
-  const fileTreeContent =
-    activeCwd && threadRef ? (
-      <LazyFileTreePanel
-        mode={shouldUseDiffSheet ? "sheet" : "sidebar"}
-        environmentId={threadRef.environmentId}
-        cwd={activeCwd}
-        availableEditors={availableEditors}
-        onClose={closeFileTree}
-        onOpenFileDiff={openFileTreeFileDiff}
-        onAddPathMention={addPathMentionToDraft}
-      />
-    ) : null;
+  const fileTreeContent = threadRef ? (
+    <LazyFileTreePanel
+      mode={shouldUseDiffSheet ? "sheet" : "sidebar"}
+      environmentId={threadRef.environmentId}
+      cwd={activeCwd}
+      availableEditors={availableEditors}
+      onClose={closeFileTree}
+      onOpenFileDiff={openFileTreeFileDiff}
+      onAddPathMention={addPathMentionToDraft}
+    />
+  ) : null;
 
   if (!shouldUseDiffSheet) {
     return (

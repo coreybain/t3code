@@ -1684,9 +1684,20 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
   const onToggleFileTree = useCallback(() => {
-    if (!isServerThread) {
+    if (routeKind === "draft") {
+      if (!draftId) {
+        return;
+      }
+      void navigate({
+        to: "/draft/$draftId",
+        params: { draftId },
+        replace: true,
+        search: (previous) =>
+          fileTreeOpen ? { ...previous, fileTree: undefined } : { ...previous, fileTree: "1" },
+      });
       return;
     }
+
     void navigate({
       to: "/$environmentId/$threadId",
       params: {
@@ -1697,7 +1708,7 @@ export default function ChatView(props: ChatViewProps) {
       search: (previous) =>
         fileTreeOpen ? { ...previous, fileTree: undefined } : { ...previous, fileTree: "1" },
     });
-  }, [environmentId, fileTreeOpen, isServerThread, navigate, threadId]);
+  }, [draftId, environmentId, fileTreeOpen, navigate, routeKind, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -3898,7 +3909,7 @@ export default function ChatView(props: ChatViewProps) {
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
-          fileTreeAvailable={isServerThread && Boolean(activeProject && gitCwd)}
+          fileTreeAvailable
           fileTreeOpen={fileTreeOpen}
           diffOpen={diffOpen}
           onRunProjectScript={runProjectScript}

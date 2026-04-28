@@ -94,19 +94,26 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const favoritesSet = useMemo(() => {
     return new Set(favorites.map((fav) => `${fav.provider}:${fav.model}`));
   }, [favorites]);
+
+  useEffect(() => {
+    if (favorites.length === 0 && selectedProvider === "favorites") {
+      setSelectedProvider(props.provider);
+    }
+  }, [favorites.length, props.provider, selectedProvider]);
+
   const favoriteOrder = useMemo(() => {
     return new Map(
       favorites.map((favorite, index) => [`${favorite.provider}:${favorite.model}`, index]),
     );
   }, [favorites]);
 
-  const readyProviderSet = useMemo(() => {
+  const enabledProviderSet = useMemo(() => {
     if (!props.providers || props.providers.length === 0) {
       return null;
     }
     return new Set(
       props.providers
-        .filter((provider) => provider.status === "ready")
+        .filter((provider) => provider.status !== "disabled")
         .map((provider) => provider.provider),
     );
   }, [props.providers]);
@@ -114,7 +121,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // Flatten models into a searchable array
   const flatModels = useMemo(() => {
     return Object.entries(props.modelOptionsByProvider).flatMap(([providerKind, models]) => {
-      if (readyProviderSet && !readyProviderSet.has(providerKind as ProviderKind)) {
+      if (enabledProviderSet && !enabledProviderSet.has(providerKind as ProviderKind)) {
         return [];
       }
       return models.map((m) => ({
@@ -125,7 +132,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         provider: providerKind as ProviderKind,
       })) satisfies Array<ModelPickerItem>;
     });
-  }, [props.modelOptionsByProvider, readyProviderSet]);
+  }, [props.modelOptionsByProvider, enabledProviderSet]);
 
   // Filter models based on search query and selected provider
   const filteredModels = useMemo(() => {
@@ -410,6 +417,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           <ModelPickerSidebar
             selectedProvider={selectedProvider}
             onSelectProvider={handleSelectProvider}
+            showFavorites={favorites.length > 0}
             {...(props.providers && { providers: props.providers })}
           />
         )}

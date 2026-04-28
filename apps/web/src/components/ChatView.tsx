@@ -890,6 +890,7 @@ export default function ChatView(props: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
+  const fileTreeOpen = rawSearch.fileTree === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadRef = useMemo(
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
@@ -996,6 +997,20 @@ export default function ChatView(props: ChatViewProps) {
   // Compute the list of environments this logical project spans, used to
   // drive the environment picker in BranchToolbar.
   const allProjects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const activeProjectKey = activeProject
+    ? scopedProjectKey(scopeProjectRef(activeProject.environmentId, activeProject.id))
+    : null;
+  const draftProjectOptions = useMemo(
+    () =>
+      allProjects
+        .map((project) => ({
+          value: scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+          label: project.name,
+          cwd: project.cwd,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label) || a.cwd.localeCompare(b.cwd)),
+    [allProjects],
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
   const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((s) => s.byId);
@@ -1642,6 +1657,23 @@ export default function ChatView(props: ChatViewProps) {
       },
     });
   }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+  const onToggleFileTree = useCallback(() => {
+    if (!isServerThread) {
+      return;
+    }
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: {
+        environmentId,
+        threadId,
+      },
+      replace: true,
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return fileTreeOpen ? { ...rest, fileTree: undefined } : { ...rest, fileTree: "1" };
+      },
+    });
+  }, [environmentId, fileTreeOpen, isServerThread, navigate, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -1711,6 +1743,39 @@ export default function ChatView(props: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
+  useEffect(() => {
+    window.addEventListener("t3code:composer-focus-request", scheduleComposerFocus);
+    return () => {
+      window.removeEventListener("t3code:composer-focus-request", scheduleComposerFocus);
+    };
+  }, [scheduleComposerFocus]);
+  const onDraftProjectChange = useCallback(
+    (projectKey: string | null) => {
+      if (!isLocalDraftThread || !draftId || !projectKey) {
+        return;
+      }
+      const project = allProjects.find(
+        (candidate) =>
+          scopedProjectKey(scopeProjectRef(candidate.environmentId, candidate.id)) === projectKey,
+      );
+      if (!project) {
+        return;
+      }
+      setDraftThreadContext(draftId, {
+        projectRef: scopeProjectRef(project.environmentId, project.id),
+        logicalProjectKey: deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+      });
+      scheduleComposerFocus();
+    },
+    [
+      allProjects,
+      draftId,
+      isLocalDraftThread,
+      projectGroupingSettings,
+      scheduleComposerFocus,
+      setDraftThreadContext,
+    ],
+  );
   const addTerminalContextToDraft = useCallback((selection: TerminalContextSelection) => {
     composerRef.current?.addTerminalContext(selection);
   }, []);
@@ -3471,6 +3536,8 @@ export default function ChatView(props: ChatViewProps) {
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          activeProjectKey={activeProjectKey}
+          draftProjectOptions={isLocalDraftThread ? draftProjectOptions : []}
           isGitRepo={isGitRepo}
           openInCwd={gitCwd}
           activeProjectScripts={activeProject?.scripts}
@@ -3484,13 +3551,17 @@ export default function ChatView(props: ChatViewProps) {
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
+          fileTreeAvailable={isServerThread && Boolean(activeProject && gitCwd)}
+          fileTreeOpen={fileTreeOpen}
           diffOpen={diffOpen}
           onRunProjectScript={runProjectScript}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
+          onToggleFileTree={onToggleFileTree}
           onToggleDiff={onToggleDiff}
+          onDraftProjectChange={onDraftProjectChange}
         />
       </header>
 

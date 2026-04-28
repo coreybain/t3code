@@ -220,7 +220,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   );
 
   const selectedTurnId = diffSearch.diffTurnId ?? null;
-  const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
+  const selectedFilePath = diffSearch.diffFilePath ?? null;
   const selectedTurn =
     selectedTurnId === null
       ? undefined

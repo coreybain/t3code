@@ -9,8 +9,9 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon, FolderTreeIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
@@ -23,6 +24,12 @@ interface ChatHeaderProps {
   draftId?: DraftId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  activeProjectKey: string | null;
+  draftProjectOptions: ReadonlyArray<{
+    value: string;
+    label: string;
+    cwd: string;
+  }>;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -34,13 +41,17 @@ interface ChatHeaderProps {
   terminalToggleShortcutLabel: string | null;
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
+  fileTreeAvailable: boolean;
+  fileTreeOpen: boolean;
   diffOpen: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleTerminal: () => void;
+  onToggleFileTree: () => void;
   onToggleDiff: () => void;
+  onDraftProjectChange: (projectKey: string | null) => void;
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -49,6 +60,8 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   activeProjectName,
+  activeProjectKey,
+  draftProjectOptions,
   isGitRepo,
   openInCwd,
   activeProjectScripts,
@@ -60,14 +73,21 @@ export const ChatHeader = memo(function ChatHeader({
   terminalToggleShortcutLabel,
   diffToggleShortcutLabel,
   gitCwd,
+  fileTreeAvailable,
+  fileTreeOpen,
   diffOpen,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
   onToggleTerminal,
+  onToggleFileTree,
   onToggleDiff,
+  onDraftProjectChange,
 }: ChatHeaderProps) {
+  const showDraftProjectPicker =
+    activeProjectKey !== null && draftProjectOptions.length > 1 && activeProjectName !== undefined;
+
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -78,11 +98,38 @@ export const ChatHeader = memo(function ChatHeader({
         >
           {activeThreadTitle}
         </h2>
-        {activeProjectName && (
+        {showDraftProjectPicker ? (
+          <Select
+            value={activeProjectKey ?? ""}
+            onValueChange={(projectKey) => {
+              onDraftProjectChange(projectKey);
+            }}
+            items={draftProjectOptions}
+          >
+            <SelectTrigger
+              variant="ghost"
+              size="xs"
+              className="h-6 max-w-48 min-w-0 shrink gap-1 rounded-full border-border px-2 text-xs font-medium text-foreground hover:bg-accent"
+              aria-label="Project"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup className="min-w-64">
+              {draftProjectOptions.map((project) => (
+                <SelectItem key={project.value} value={project.value}>
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate">{project.label}</span>
+                    <span className="truncate text-xs text-muted-foreground">{project.cwd}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        ) : activeProjectName ? (
           <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
             <span className="min-w-0 truncate">{activeProjectName}</span>
           </Badge>
-        )}
+        ) : null}
         {activeProjectName && !isGitRepo && (
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
             No Git
@@ -137,6 +184,28 @@ export const ChatHeader = memo(function ChatHeader({
               : terminalToggleShortcutLabel
                 ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
                 : "Toggle terminal drawer"}
+          </TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0"
+                pressed={fileTreeOpen}
+                onPressedChange={onToggleFileTree}
+                aria-label="Toggle file tree"
+                variant="outline"
+                size="xs"
+                disabled={!fileTreeAvailable}
+              >
+                <FolderTreeIcon className="size-3" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {!fileTreeAvailable
+              ? "File tree is unavailable until this thread has an active project."
+              : "Toggle file tree"}
           </TooltipPopup>
         </Tooltip>
         <Tooltip>

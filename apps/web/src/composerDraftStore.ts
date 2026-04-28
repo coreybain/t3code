@@ -312,6 +312,7 @@ interface ComposerDraftStoreState {
       branch?: string | null;
       worktreePath?: string | null;
       projectRef?: ScopedProjectRef;
+      logicalProjectKey?: string;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
@@ -1966,6 +1967,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             ) {
               return state;
             }
+            const nextLogicalProjectKey =
+              options.logicalProjectKey === undefined
+                ? existing.logicalProjectKey
+                : logicalProjectDraftKey(options.logicalProjectKey);
+            if (nextLogicalProjectKey.length === 0) {
+              return state;
+            }
             const projectChanged =
               nextProjectRef.environmentId !== existing.environmentId ||
               nextProjectRef.projectId !== existing.projectId;
@@ -1985,7 +1993,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               threadId: existing.threadId,
               environmentId: nextProjectRef.environmentId,
               projectId: nextProjectRef.projectId,
-              logicalProjectKey: existing.logicalProjectKey,
+              logicalProjectKey: nextLogicalProjectKey,
               createdAt:
                 options.createdAt === undefined
                   ? existing.createdAt
@@ -2017,11 +2025,25 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (isUnchanged) {
               return state;
             }
+            const draftThreadsByThreadKey = {
+              ...state.draftThreadsByThreadKey,
+              [threadKey]: nextDraftThread,
+            };
+            if (nextLogicalProjectKey !== existing.logicalProjectKey) {
+              return {
+                draftThreadsByThreadKey,
+                logicalProjectDraftThreadKeyByLogicalProjectKey: {
+                  ...Object.fromEntries(
+                    Object.entries(state.logicalProjectDraftThreadKeyByLogicalProjectKey).filter(
+                      ([, mappedThreadKey]) => mappedThreadKey !== threadKey,
+                    ),
+                  ),
+                  [nextLogicalProjectKey]: threadKey,
+                },
+              };
+            }
             return {
-              draftThreadsByThreadKey: {
-                ...state.draftThreadsByThreadKey,
-                [threadKey]: nextDraftThread,
-              },
+              draftThreadsByThreadKey,
             };
           });
         },

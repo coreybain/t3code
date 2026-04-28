@@ -177,6 +177,7 @@ function Sidebar({
   resizable = false,
   className,
   children,
+  style,
   ...props
 }: React.ComponentProps<"div"> & {
   side?: "left" | "right";
@@ -213,6 +214,7 @@ function Sidebar({
             className,
           )}
           data-slot="sidebar"
+          style={style}
           {...props}
         >
           {children}
@@ -237,6 +239,7 @@ function Sidebar({
             side={side}
             style={
               {
+                ...style,
                 "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
               } as React.CSSProperties
             }
@@ -287,6 +290,24 @@ function Sidebar({
             className,
           )}
           data-slot="sidebar-container"
+          style={
+            {
+              ...style,
+              ...(side === "left"
+                ? {
+                    left:
+                      state === "collapsed" && collapsible === "offcanvas"
+                        ? "calc((var(--sidebar-width) + var(--sidebar-fixed-left-offset, 0px)) * -1)"
+                        : "var(--sidebar-fixed-left-offset, 0px)",
+                  }
+                : {
+                    right:
+                      state === "collapsed" && collapsible === "offcanvas"
+                        ? "calc((var(--sidebar-width) + var(--sidebar-fixed-right-offset, 0px)) * -1)"
+                        : "var(--sidebar-fixed-right-offset, 0px)",
+                  }),
+            } as React.CSSProperties
+          }
           {...props}
         >
           <div

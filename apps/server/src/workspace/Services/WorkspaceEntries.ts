@@ -12,6 +12,8 @@ import type { Effect } from "effect";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  ProjectListEntriesInput,
+  ProjectListEntriesResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
@@ -42,6 +44,13 @@ export class WorkspaceEntriesBrowseError extends Schema.TaggedErrorClass<Workspa
  * invalidation.
  */
 export interface WorkspaceEntriesShape {
+  /**
+   * List indexed workspace entries for rendering project file trees.
+   */
+  readonly list: (
+    input: ProjectListEntriesInput,
+  ) => Effect.Effect<ProjectListEntriesResult, WorkspaceEntriesError>;
+
   /**
    * Browse matching directories for the provided partial path.
    */

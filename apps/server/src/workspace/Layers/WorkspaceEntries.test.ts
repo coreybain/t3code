@@ -68,6 +68,12 @@ const searchWorkspaceEntries = (input: { cwd: string; query: string; limit: numb
     return yield* workspaceEntries.search(input);
   });
 
+const listWorkspaceEntries = (input: { cwd: string; limit: number }) =>
+  Effect.gen(function* () {
+    const workspaceEntries = yield* WorkspaceEntries;
+    return yield* workspaceEntries.list(input);
+  });
+
 const appendSeparator = (input: string) =>
   input.endsWith("/") || input.endsWith("\\")
     ? input
@@ -277,6 +283,74 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
         yield* searchWorkspaceEntries({ cwd, query: "", limit: 200 });
 
         expect(peakReads).toBeLessThanOrEqual(32);
+      }),
+    );
+  });
+
+  describe("list", () => {
+    it.effect("returns files and directories relative to cwd", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/components/Composer.tsx");
+        yield* writeTextFile(cwd, "src/index.ts");
+        yield* writeTextFile(cwd, "README.md");
+        yield* writeTextFile(cwd, ".git/HEAD");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+
+        const result = yield* listWorkspaceEntries({ cwd, limit: 100 });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src");
+        expect(paths).toContain("src/components");
+        expect(paths).toContain("src/components/Composer.tsx");
+        expect(paths).toContain("README.md");
+        expect(paths.some((entryPath) => entryPath.startsWith(".git"))).toBe(false);
+        expect(paths.some((entryPath) => entryPath.startsWith("node_modules"))).toBe(false);
+        expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("uses git-backed workspace entries", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-git-", git: true });
+        yield* writeTextFile(cwd, "src/keep.ts", "export {};");
+        yield* git(cwd, ["add", "src/keep.ts"]);
+
+        const result = yield* listWorkspaceEntries({ cwd, limit: 100 });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src");
+        expect(paths).toContain("src/keep.ts");
+      }),
+    );
+
+    it.effect("excludes ignored directories", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-ignored-" });
+        yield* writeTextFile(cwd, "src/keep.ts", "export {};");
+        yield* writeTextFile(cwd, "dist/generated.js", "ignored");
+        yield* writeTextFile(cwd, ".cache/blob.json", "{}");
+
+        const result = yield* listWorkspaceEntries({ cwd, limit: 100 });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src/keep.ts");
+        expect(paths.some((entryPath) => entryPath.startsWith("dist"))).toBe(false);
+        expect(paths.some((entryPath) => entryPath.startsWith(".cache"))).toBe(false);
+      }),
+    );
+
+    it.effect("truncates at the requested limit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-limit-" });
+        yield* writeTextFile(cwd, "src/a.ts", "export {};");
+        yield* writeTextFile(cwd, "src/b.ts", "export {};");
+        yield* writeTextFile(cwd, "src/c.ts", "export {};");
+
+        const result = yield* listWorkspaceEntries({ cwd, limit: 2 });
+
+        expect(result.entries).toHaveLength(2);
+        expect(result.truncated).toBe(true);
       }),
     );
   });

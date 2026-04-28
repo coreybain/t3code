@@ -142,6 +142,22 @@ function directoryAncestorsOf(relativePath: string): string[] {
   return directories;
 }
 
+function compareWorkspaceEntries(left: ProjectEntry, right: ProjectEntry): number {
+  if (left.parentPath !== right.parentPath) {
+    return (left.parentPath ?? "").localeCompare(right.parentPath ?? "", undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+  }
+  if (left.kind !== right.kind) {
+    return left.kind === "directory" ? -1 : 1;
+  }
+  return left.path.localeCompare(right.path, undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
 const resolveBrowseTarget = (
   input: FilesystemBrowseInput,
   pathService: Path.Path,
@@ -462,6 +478,20 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     },
   );
 
+  const list: WorkspaceEntriesShape["list"] = Effect.fn("WorkspaceEntries.list")(function* (input) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    return yield* Cache.get(workspaceIndexCache, normalizedCwd).pipe(
+      Effect.map((index) => {
+        const limit = Math.max(0, Math.floor(input.limit));
+        const entries = [...index.entries].toSorted(compareWorkspaceEntries).slice(0, limit);
+        return {
+          entries,
+          truncated: index.truncated || index.entries.length > limit,
+        };
+      }),
+    );
+  });
+
   const search: WorkspaceEntriesShape["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
@@ -500,6 +530,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   return {
     browse,
     invalidate,
+    list,
     search,
   } satisfies WorkspaceEntriesShape;
 });

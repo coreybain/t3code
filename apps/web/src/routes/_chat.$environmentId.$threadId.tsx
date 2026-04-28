@@ -23,12 +23,39 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import { selectProjectByRef } from "../store";
+import { scopeProjectRef } from "@t3tools/client-runtime";
+import { Schema } from "effect";
+import { useServerAvailableEditors } from "~/rpc/serverState";
+import { getLocalStorageItem } from "~/hooks/useLocalStorage";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
+const FileTreePanel = lazy(() => import("../components/FileTreePanel"));
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
+const FILE_TREE_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_file_tree_sidebar_width";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
+const FILE_TREE_INLINE_DEFAULT_WIDTH = "clamp(20rem,32vw,28rem)";
 const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
+const FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH = 18 * 16;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
+
+function getInitialFileTreeInlineSidebarWidth() {
+  if (typeof window === "undefined") {
+    return FILE_TREE_INLINE_DEFAULT_WIDTH;
+  }
+
+  try {
+    const storedWidth = getLocalStorageItem(
+      FILE_TREE_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+      Schema.Finite,
+    );
+    return storedWidth === null
+      ? FILE_TREE_INLINE_DEFAULT_WIDTH
+      : `${Math.max(FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH, storedWidth)}px`;
+  } catch {
+    return FILE_TREE_INLINE_DEFAULT_WIDTH;
+  }
+}
 
 const DiffLoadingFallback = (props: { mode: DiffPanelMode }) => {
   return (
@@ -48,13 +75,34 @@ const LazyDiffPanel = (props: { mode: DiffPanelMode }) => {
   );
 };
 
+const FileTreeLoadingFallback = () => (
+  <div className="flex h-full min-w-0 flex-col bg-background">
+    <div className="border-b border-border px-3 py-3">
+      <div className="h-7 w-28 rounded-md bg-muted" />
+      <div className="mt-2 h-7 rounded-md bg-muted" />
+    </div>
+    <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground/70">
+      Loading file tree...
+    </div>
+  </div>
+);
+
+const LazyFileTreePanel = (props: React.ComponentProps<typeof FileTreePanel>) => {
+  return (
+    <Suspense fallback={<FileTreeLoadingFallback />}>
+      <FileTreePanel {...props} />
+    </Suspense>
+  );
+};
+
 const DiffPanelInlineSidebar = (props: {
   diffOpen: boolean;
+  fixedRightOffset: string;
   onCloseDiff: () => void;
   onOpenDiff: () => void;
   renderDiffContent: boolean;
 }) => {
-  const { diffOpen, onCloseDiff, onOpenDiff, renderDiffContent } = props;
+  const { diffOpen, fixedRightOffset, onCloseDiff, onOpenDiff, renderDiffContent } = props;
   const onOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
@@ -123,6 +171,7 @@ const DiffPanelInlineSidebar = (props: {
         side="right"
         collapsible="offcanvas"
         className="border-l border-border bg-card text-foreground"
+        style={{ "--sidebar-fixed-right-offset": fixedRightOffset } as React.CSSProperties}
         resizable={{
           minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: shouldAcceptInlineSidebarWidth,
@@ -130,6 +179,50 @@ const DiffPanelInlineSidebar = (props: {
         }}
       >
         {renderDiffContent ? <LazyDiffPanel mode="sidebar" /> : null}
+        <SidebarRail />
+      </Sidebar>
+    </SidebarProvider>
+  );
+};
+
+const FileTreePanelInlineSidebar = (props: {
+  fileTreeOpen: boolean;
+  onCloseFileTree: () => void;
+  onOpenFileTree: () => void;
+  onResizeFileTree: (width: number) => void;
+  children: React.ReactNode;
+}) => {
+  const { fileTreeOpen, onCloseFileTree, onOpenFileTree, onResizeFileTree, children } = props;
+  const onOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        onOpenFileTree();
+        return;
+      }
+      onCloseFileTree();
+    },
+    [onCloseFileTree, onOpenFileTree],
+  );
+
+  return (
+    <SidebarProvider
+      defaultOpen={false}
+      open={fileTreeOpen}
+      onOpenChange={onOpenChange}
+      className="w-auto min-h-0 flex-none bg-transparent"
+      style={{ "--sidebar-width": FILE_TREE_INLINE_DEFAULT_WIDTH } as React.CSSProperties}
+    >
+      <Sidebar
+        side="right"
+        collapsible="offcanvas"
+        className="border-l border-border bg-card text-foreground"
+        resizable={{
+          minWidth: FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH,
+          onResize: onResizeFileTree,
+          storageKey: FILE_TREE_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+        }}
+      >
+        {children}
         <SidebarRail />
       </Sidebar>
     </SidebarProvider>
@@ -146,6 +239,16 @@ function ChatThreadRouteView() {
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).bootstrapComplete,
   );
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
+  const activeProject = useStore((store) =>
+    serverThread
+      ? selectProjectByRef(
+          store,
+          scopeProjectRef(serverThread.environmentId, serverThread.projectId),
+        )
+      : undefined,
+  );
+  const activeCwd = serverThread?.worktreePath ?? activeProject?.cwd ?? null;
+  const availableEditors = useServerAvailableEditors();
   const threadExists = useStore((store) => selectThreadExistsByRef(store, threadRef));
   const environmentHasServerThreads = useStore(
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).threadIds.length > 0,
@@ -166,7 +269,11 @@ function ChatThreadRouteView() {
   const serverThreadStarted = threadHasStarted(serverThread);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
   const diffOpen = search.diff === "1";
+  const fileTreeOpen = search.fileTree === "1";
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const [fileTreeInlineSidebarWidth, setFileTreeInlineSidebarWidth] = useState(
+    getInitialFileTreeInlineSidebarWidth,
+  );
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
   const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
     threadKey: currentThreadKey,
@@ -194,7 +301,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: { diff: undefined },
+      search: { diff: undefined, fileTree: undefined },
     });
   }, [navigate, threadRef]);
   const openDiff = useCallback(() => {
@@ -211,6 +318,63 @@ function ChatThreadRouteView() {
       },
     });
   }, [markDiffOpened, navigate, threadRef]);
+  const closeFileTree = useCallback(() => {
+    if (!threadRef) {
+      return;
+    }
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+      search: { fileTree: undefined },
+    });
+  }, [navigate, threadRef]);
+  const openFileTree = useCallback(() => {
+    if (!threadRef) {
+      return;
+    }
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, fileTree: "1" };
+      },
+    });
+  }, [navigate, threadRef]);
+  const openFileTreeFileDiff = useCallback(
+    (filePath: string) => {
+      if (!threadRef) {
+        return;
+      }
+      markDiffOpened();
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(threadRef),
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return { ...rest, diff: "1", diffFilePath: filePath };
+        },
+      });
+    },
+    [markDiffOpened, navigate, threadRef],
+  );
+  const updateFileTreeInlineSidebarWidth = useCallback((width: number) => {
+    setFileTreeInlineSidebarWidth(`${Math.max(FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH, width)}px`);
+  }, []);
+  const addPathMentionToDraft = useCallback(
+    (_kind: "file" | "directory", path: string) => {
+      if (!threadRef) {
+        return;
+      }
+      const store = useComposerDraftStore.getState();
+      const currentPrompt = store.getComposerDraft(threadRef)?.prompt ?? "";
+      const mention = `@${path} `;
+      const separator = currentPrompt.length === 0 || /\s$/.test(currentPrompt) ? "" : " ";
+      store.setPrompt(threadRef, `${currentPrompt}${separator}${mention}`);
+      window.dispatchEvent(new Event("t3code:composer-focus-request"));
+    },
+    [threadRef],
+  );
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
@@ -234,6 +398,18 @@ function ChatThreadRouteView() {
   }
 
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
+  const fileTreeContent =
+    activeCwd && threadRef ? (
+      <LazyFileTreePanel
+        mode={shouldUseDiffSheet ? "sheet" : "sidebar"}
+        environmentId={threadRef.environmentId}
+        cwd={activeCwd}
+        availableEditors={availableEditors}
+        onClose={closeFileTree}
+        onOpenFileDiff={openFileTreeFileDiff}
+        onAddPathMention={addPathMentionToDraft}
+      />
+    ) : null;
 
   if (!shouldUseDiffSheet) {
     return (
@@ -243,16 +419,25 @@ function ChatThreadRouteView() {
             environmentId={threadRef.environmentId}
             threadId={threadRef.threadId}
             onDiffPanelOpen={markDiffOpened}
-            reserveTitleBarControlInset={!diffOpen}
+            reserveTitleBarControlInset={!diffOpen && !fileTreeOpen}
             routeKind="server"
           />
         </SidebarInset>
         <DiffPanelInlineSidebar
           diffOpen={diffOpen}
+          fixedRightOffset={fileTreeOpen ? fileTreeInlineSidebarWidth : "0px"}
           onCloseDiff={closeDiff}
           onOpenDiff={openDiff}
           renderDiffContent={shouldRenderDiffContent}
         />
+        <FileTreePanelInlineSidebar
+          fileTreeOpen={fileTreeOpen}
+          onCloseFileTree={closeFileTree}
+          onOpenFileTree={openFileTree}
+          onResizeFileTree={updateFileTreeInlineSidebarWidth}
+        >
+          {fileTreeOpen ? fileTreeContent : null}
+        </FileTreePanelInlineSidebar>
       </>
     );
   }
@@ -268,7 +453,10 @@ function ChatThreadRouteView() {
         />
       </SidebarInset>
       <RightPanelSheet open={diffOpen} onClose={closeDiff}>
-        {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
+        {shouldRenderDiffContent && !fileTreeOpen ? <LazyDiffPanel mode="sheet" /> : null}
+      </RightPanelSheet>
+      <RightPanelSheet open={fileTreeOpen} onClose={closeFileTree}>
+        {fileTreeOpen ? fileTreeContent : null}
       </RightPanelSheet>
     </>
   );
@@ -277,7 +465,7 @@ function ChatThreadRouteView() {
 export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
   validateSearch: (search) => parseDiffRouteSearch(search),
   search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
+    middlewares: [retainSearchParams<DiffRouteSearch>(["diff", "fileTree"])],
   },
   component: ChatThreadRouteView,
 });

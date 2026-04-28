@@ -100,7 +100,7 @@ function FileTreePanelHeader(props: {
 
   return (
     <div className="flex flex-col border-b border-border">
-      <div className="flex h-12 min-w-0 items-center justify-between gap-2 px-4">
+      <div className="flex h-10 min-w-0 items-center justify-between gap-2 px-3">
         <Select
           value={props.viewMode}
           onValueChange={(value) => props.onViewModeChange(value as FileTreeViewMode)}
@@ -143,7 +143,7 @@ function FileTreePanelHeader(props: {
         </div>
       </div>
       {props.searchVisible ? (
-        <div className="px-3 pb-3">
+        <div className="px-3 pb-2">
           <div className="relative">
             <SearchIcon className="pointer-events-none absolute left-2 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground/70" />
             <Input

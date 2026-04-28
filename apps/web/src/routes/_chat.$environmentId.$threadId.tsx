@@ -39,6 +39,7 @@ const FILE_TREE_INLINE_DEFAULT_WIDTH = "clamp(20rem,32vw,28rem)";
 const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 17 * 16;
 const FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH = 18 * 16;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
+const CHAT_HEADER_HEIGHT = "52px";
 
 function getStoredInlineSidebarWidth(storageKey: string): number | null {
   try {
@@ -233,7 +234,7 @@ const DiffPanelInlineSidebar = (props: {
       defaultOpen={false}
       open={diffOpen}
       onOpenChange={onOpenChange}
-      className="w-auto min-h-0 flex-none bg-transparent"
+      className="w-auto min-h-0 flex-none bg-transparent [&_[data-slot=sidebar-gap]]:hidden"
       data-inline-right-panel="diff"
       style={{ "--sidebar-width": width } as React.CSSProperties}
     >
@@ -241,7 +242,13 @@ const DiffPanelInlineSidebar = (props: {
         side="right"
         collapsible="offcanvas"
         className="border-l border-border bg-card text-foreground"
-        style={{ "--sidebar-fixed-right-offset": fixedRightOffset } as React.CSSProperties}
+        style={
+          {
+            "--sidebar-fixed-right-offset": fixedRightOffset,
+            top: CHAT_HEADER_HEIGHT,
+            height: `calc(100svh - ${CHAT_HEADER_HEIGHT})`,
+          } as React.CSSProperties
+        }
         resizable={{
           minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
           onResize: onResizeDiffPanel,
@@ -282,7 +289,7 @@ const FileTreePanelInlineSidebar = (props: {
       defaultOpen={false}
       open={fileTreeOpen}
       onOpenChange={onOpenChange}
-      className="w-auto min-h-0 flex-none bg-transparent"
+      className="w-auto min-h-0 flex-none bg-transparent [&_[data-slot=sidebar-gap]]:hidden"
       data-inline-right-panel="file-tree"
       style={{ "--sidebar-width": width } as React.CSSProperties}
     >
@@ -290,6 +297,12 @@ const FileTreePanelInlineSidebar = (props: {
         side="right"
         collapsible="offcanvas"
         className="border-l border-border bg-card text-foreground"
+        style={
+          {
+            top: CHAT_HEADER_HEIGHT,
+            height: `calc(100svh - ${CHAT_HEADER_HEIGHT})`,
+          } as React.CSSProperties
+        }
         resizable={{
           minWidth: FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH,
           onResize: onResizeFileTree,
@@ -569,6 +582,14 @@ function ChatThreadRouteView() {
       onAddPathMention={addPathMentionToDraft}
     />
   ) : null;
+  const mainContentRightInset =
+    diffOpen && fileTreeOpen
+      ? `calc(${diffInlineSidebarWidth} + ${fileTreeInlineSidebarWidth})`
+      : diffOpen
+        ? diffInlineSidebarWidth
+        : fileTreeOpen
+          ? fileTreeInlineSidebarWidth
+          : undefined;
 
   if (!shouldUseDiffSheet) {
     return (
@@ -577,6 +598,7 @@ function ChatThreadRouteView() {
           <ChatView
             environmentId={threadRef.environmentId}
             threadId={threadRef.threadId}
+            mainContentRightInset={mainContentRightInset}
             onDiffPanelOpen={markDiffOpened}
             reserveTitleBarControlInset={!diffOpen && !fileTreeOpen}
             routeKind="server"

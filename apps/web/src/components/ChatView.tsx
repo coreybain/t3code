@@ -331,6 +331,7 @@ type ChatViewProps =
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
+      mainContentRightInset?: string | undefined;
       routeKind: "server";
       draftId?: never;
     }
@@ -339,6 +340,7 @@ type ChatViewProps =
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
+      mainContentRightInset?: string | undefined;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -652,6 +654,7 @@ export default function ChatView(props: ChatViewProps) {
     threadId,
     routeKind,
     onDiffPanelOpen,
+    mainContentRightInset,
     reserveTitleBarControlInset = true,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
@@ -3943,7 +3946,10 @@ export default function ChatView(props: ChatViewProps) {
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
       {/* Main content area with optional plan sidebar */}
-      <div className="flex min-h-0 min-w-0 flex-1">
+      <div
+        className="flex min-h-0 min-w-0 flex-1 transition-[margin-right] duration-200 ease-linear"
+        style={mainContentRightInset ? { marginRight: mainContentRightInset } : undefined}
+      >
         {/* Chat column */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* Messages Wrapper */}

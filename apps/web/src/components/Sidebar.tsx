@@ -165,6 +165,7 @@ import {
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
+import { SidebarUsageMonitor } from "./usage/UsageLimitViews";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { CommandDialogTrigger } from "./ui/command";
 import { readEnvironmentApi } from "../environmentApi";
@@ -2552,25 +2553,64 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 
 const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
+  const [showUsageMonitor, setShowUsageMonitor] = useState(false);
+  const usageHoverTimerRef = useRef<number | null>(null);
+
+  const clearUsageHoverTimer = useCallback(() => {
+    if (usageHoverTimerRef.current === null) return;
+    window.clearTimeout(usageHoverTimerRef.current);
+    usageHoverTimerRef.current = null;
+  }, []);
+
+  const showUsageMonitorAfterDelay = useCallback(() => {
+    clearUsageHoverTimer();
+    usageHoverTimerRef.current = window.setTimeout(() => {
+      setShowUsageMonitor(true);
+      usageHoverTimerRef.current = null;
+    }, 1_000);
+  }, [clearUsageHoverTimer]);
+
+  const hideUsageMonitor = useCallback(() => {
+    clearUsageHoverTimer();
+    setShowUsageMonitor(false);
+  }, [clearUsageHoverTimer]);
+
+  useEffect(() => clearUsageHoverTimer, [clearUsageHoverTimer]);
+
   const handleSettingsClick = useCallback(() => {
     void navigate({ to: "/settings" });
   }, [navigate]);
+  const handleUsageLearnMore = useCallback(() => {
+    hideUsageMonitor();
+    void navigate({ to: "/settings/usage" });
+  }, [hideUsageMonitor, navigate]);
 
   return (
     <SidebarFooter className="p-2">
       <SidebarUpdatePill />
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-            onClick={handleSettingsClick}
-          >
-            <SettingsIcon className="size-3.5" />
-            <span className="text-xs">Settings</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
+      <div
+        onPointerEnter={showUsageMonitorAfterDelay}
+        onPointerLeave={hideUsageMonitor}
+        onFocus={showUsageMonitorAfterDelay}
+        onBlur={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget)) return;
+          hideUsageMonitor();
+        }}
+      >
+        {showUsageMonitor ? <SidebarUsageMonitor onLearnMore={handleUsageLearnMore} /> : null}
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="sm"
+              className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+              onClick={handleSettingsClick}
+            >
+              <SettingsIcon className="size-3.5" />
+              <span className="text-xs">Settings</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </div>
     </SidebarFooter>
   );
 });

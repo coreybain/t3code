@@ -79,6 +79,7 @@ import {
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import { CodexUsageSnapshot, ServerUsageError } from "./usage.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -122,6 +123,7 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverGetUsage: "server.getUsage",
 
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
@@ -158,6 +160,12 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: ServerSettingsError,
+});
+
+export const WsServerGetUsageRpc = Rpc.make(WS_METHODS.serverGetUsage, {
+  payload: Schema.Struct({}),
+  success: CodexUsageSnapshot,
+  error: ServerUsageError,
 });
 
 export const WsProjectsListEntriesRpc = Rpc.make(WS_METHODS.projectsListEntries, {
@@ -371,6 +379,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerGetUsageRpc,
   WsProjectsListEntriesRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,

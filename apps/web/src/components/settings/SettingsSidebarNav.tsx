@@ -1,5 +1,5 @@
-import type { ComponentType } from "react";
-import { ArchiveIcon, ArrowLeftIcon, Link2Icon, Settings2Icon } from "lucide-react";
+import { Fragment, type ComponentType } from "react";
+import { ArchiveIcon, ArrowLeftIcon, GaugeIcon, Link2Icon, Settings2Icon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
 import {
@@ -15,7 +15,8 @@ import {
 export type SettingsSectionPath =
   | "/settings/general"
   | "/settings/connections"
-  | "/settings/archived";
+  | "/settings/archived"
+  | "/settings/usage";
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
@@ -25,6 +26,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
+  { label: "Usage", to: "/settings/usage", icon: GaugeIcon },
 ];
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
@@ -39,27 +41,34 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               const Icon = item.icon;
               const isActive = pathname === item.to;
               return (
-                <SidebarMenuItem key={item.to}>
-                  <SidebarMenuButton
-                    size="sm"
-                    isActive={isActive}
-                    className={
-                      isActive
-                        ? "gap-2.5 px-2.5 py-2 text-left text-[13px] font-medium text-foreground"
-                        : "gap-2.5 px-2.5 py-2 text-left text-[13px] text-muted-foreground/70 hover:text-foreground/80"
-                    }
-                    onClick={() => void navigate({ to: item.to, replace: true })}
-                  >
-                    <Icon
+                <Fragment key={item.to}>
+                  {item.to === "/settings/usage" ? (
+                    <SidebarMenuItem aria-hidden="true" className="py-1">
+                      <div className="mx-2 h-px bg-sidebar-border" />
+                    </SidebarMenuItem>
+                  ) : null}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      size="sm"
+                      isActive={isActive}
                       className={
                         isActive
-                          ? "size-4 shrink-0 text-foreground"
-                          : "size-4 shrink-0 text-muted-foreground/60"
+                          ? "gap-2.5 px-2.5 py-2 text-left text-[13px] font-medium text-foreground"
+                          : "gap-2.5 px-2.5 py-2 text-left text-[13px] text-muted-foreground/70 hover:text-foreground/80"
                       }
-                    />
-                    <span className="truncate">{item.label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                      onClick={() => void navigate({ to: item.to, replace: true })}
+                    >
+                      <Icon
+                        className={
+                          isActive
+                            ? "size-4 shrink-0 text-foreground"
+                            : "size-4 shrink-0 text-muted-foreground/60"
+                        }
+                      />
+                      <span className="truncate">{item.label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </Fragment>
               );
             })}
           </SidebarMenu>

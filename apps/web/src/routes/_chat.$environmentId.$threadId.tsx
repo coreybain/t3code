@@ -1,5 +1,15 @@
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
@@ -12,9 +22,17 @@ import {
 } from "../components/DiffPanelShell";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import {
+  encodeFileSidePanelTabId,
+  encodeSidePanelTabs,
   type DiffRouteSearch,
   parseDiffRouteSearch,
+  parseSidePanelTabs,
+  resolveNextSidePanelTab,
+  SIDE_PANEL_BROWSER_TAB_ID,
+  SIDE_PANEL_REVIEW_TAB_ID,
+  SIDE_PANEL_SUMMARY_TAB_ID,
   stripDiffSearchParams,
+  type SidePanelTabId,
 } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
@@ -29,15 +47,17 @@ import { Schema } from "effect";
 import { useServerAvailableEditors } from "~/rpc/serverState";
 import { getLocalStorageItem } from "~/hooks/useLocalStorage";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { ThreadSidePanel } from "../components/ThreadSidePanel";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const FileTreePanel = lazy(() => import("../components/FileTreePanel"));
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
+const SIDE_PANEL_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_side_panel_sidebar_width";
 const FILE_TREE_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_file_tree_sidebar_width";
 const RIGHT_PANEL_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_right_panel_sidebar_width";
-const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
+const SIDE_PANEL_INLINE_DEFAULT_WIDTH = "clamp(32rem,52vw,50rem)";
 const FILE_TREE_INLINE_DEFAULT_WIDTH = "clamp(20rem,32vw,28rem)";
-const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 17 * 16;
+const SIDE_PANEL_INLINE_SIDEBAR_MIN_WIDTH = 22 * 16;
 const FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH = 18 * 16;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
 const CHAT_HEADER_HEIGHT = "52px";
@@ -52,6 +72,7 @@ function getStoredInlineSidebarWidth(storageKey: string): number | null {
 
 function getInitialInlineSidebarWidth(input: {
   defaultWidth: string;
+  fallbackStorageKey?: string;
   minWidth: number;
   storageKey: string;
 }) {
@@ -61,6 +82,7 @@ function getInitialInlineSidebarWidth(input: {
 
   const storedWidth =
     getStoredInlineSidebarWidth(input.storageKey) ??
+    (input.fallbackStorageKey ? getStoredInlineSidebarWidth(input.fallbackStorageKey) : null) ??
     getStoredInlineSidebarWidth(RIGHT_PANEL_INLINE_SIDEBAR_WIDTH_STORAGE_KEY);
   return storedWidth === null ? input.defaultWidth : `${Math.max(input.minWidth, storedWidth)}px`;
 }
@@ -74,7 +96,9 @@ function parsePixelWidth(width: string) {
   return Number.isFinite(parsedWidth) ? parsedWidth : null;
 }
 
-function readInlineRightPanelWidth(panel: "diff" | "file-tree") {
+type InlineRightPanel = "side-panel" | "file-tree";
+
+function readInlineRightPanelWidth(panel: InlineRightPanel) {
   if (typeof window === "undefined") {
     return null;
   }
@@ -85,21 +109,27 @@ function readInlineRightPanelWidth(panel: "diff" | "file-tree") {
   return width !== null && Number.isFinite(width) ? width : null;
 }
 
-function getInlineRightPanelElement(panel: "diff" | "file-tree") {
+function readChatInsetLeftOffset() {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+  const inset = document.querySelector<HTMLElement>("[data-slot='sidebar-inset']");
+  const left = inset?.getBoundingClientRect().left ?? 0;
+  return Number.isFinite(left) ? Math.max(0, Math.round(left)) : 0;
+}
+
+function getInlineRightPanelElement(panel: InlineRightPanel) {
   if (typeof window === "undefined") {
     return null;
   }
   return document.querySelector<HTMLElement>(`[data-inline-right-panel="${panel}"]`);
 }
 
-function applyInlineRightPanelWidth(panel: "diff" | "file-tree", width: number) {
+function applyInlineRightPanelWidth(panel: InlineRightPanel, width: number) {
   getInlineRightPanelElement(panel)?.style.setProperty("--sidebar-width", formatPixelWidth(width));
 }
 
-function setInlineRightPanelTransitionDuration(
-  panel: "diff" | "file-tree",
-  duration: string | null,
-) {
+function setInlineRightPanelTransitionDuration(panel: InlineRightPanel, duration: string | null) {
   const element = getInlineRightPanelElement(panel);
   const targets = [
     element?.querySelector<HTMLElement>("[data-slot='sidebar-gap']"),
@@ -114,8 +144,8 @@ function setInlineRightPanelTransitionDuration(
   }
 }
 
-function applyDiffPanelRightOffset(offset: number) {
-  getInlineRightPanelElement("diff")
+function applySidePanelRightOffset(offset: number) {
+  getInlineRightPanelElement("side-panel")
     ?.querySelector<HTMLElement>("[data-slot='sidebar-container']")
     ?.style.setProperty("--sidebar-fixed-right-offset", formatPixelWidth(offset));
 }
@@ -162,35 +192,63 @@ const LazyFileTreePanel = (props: React.ComponentProps<typeof FileTreePanel>) =>
   );
 };
 
-const DiffPanelInlineSidebar = (props: {
+const ThreadSidePanelInlineSidebar = (props: {
+  activeTabId: SidePanelTabId;
   bottomInset: string;
-  diffOpen: boolean;
+  cwd: string | null;
+  environmentId: EnvironmentId;
   fixedRightOffset: string;
-  onCloseDiff: () => void;
-  onOpenDiff: () => void;
-  onResizeDiffPanel: (width: number) => void;
-  renderDiffContent: boolean;
+  onCloseSidePanel: () => void;
+  onCloseTab: (tabId: SidePanelTabId) => void;
+  onExpandedChange: (expanded: boolean) => void;
+  onOpenBrowser: () => void;
+  onOpenFile: (relativePath: string) => void;
+  onOpenReview: () => void;
+  onOpenSidePanel: () => void;
+  onResizeSidePanel: (width: number) => void;
+  onSelectTab: (tabId: SidePanelTabId) => void;
+  renderReviewContent: boolean;
+  sidePanelExpanded: boolean;
+  sidePanelExpandedLeftOffset: number;
+  sidePanelOpen: boolean;
+  summaryContent: React.ReactNode;
+  tabIds: ReadonlyArray<SidePanelTabId>;
+  threadKey: string;
   width: string;
 }) => {
   const {
+    activeTabId,
     bottomInset,
-    diffOpen,
+    cwd,
+    environmentId,
     fixedRightOffset,
-    onCloseDiff,
-    onOpenDiff,
-    onResizeDiffPanel,
-    renderDiffContent,
+    onCloseSidePanel,
+    onCloseTab,
+    onExpandedChange,
+    onOpenBrowser,
+    onOpenFile,
+    onOpenReview,
+    onOpenSidePanel,
+    onResizeSidePanel,
+    onSelectTab,
+    renderReviewContent,
+    sidePanelExpanded,
+    sidePanelExpandedLeftOffset,
+    sidePanelOpen,
+    summaryContent,
+    tabIds,
+    threadKey,
     width,
   } = props;
   const onOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
-        onOpenDiff();
+        onOpenSidePanel();
         return;
       }
-      onCloseDiff();
+      onCloseSidePanel();
     },
-    [onCloseDiff, onOpenDiff],
+    [onCloseSidePanel, onOpenSidePanel],
   );
   const shouldAcceptInlineSidebarWidth = useCallback(
     ({ currentWidth, nextWidth }: { currentWidth: number; nextWidth: number }) => {
@@ -235,11 +293,17 @@ const DiffPanelInlineSidebar = (props: {
   return (
     <SidebarProvider
       defaultOpen={false}
-      open={diffOpen}
+      open={sidePanelOpen}
       onOpenChange={onOpenChange}
       className="w-auto min-h-0 flex-none bg-transparent [&_[data-slot=sidebar-gap]]:hidden"
-      data-inline-right-panel="diff"
-      style={{ "--sidebar-width": width } as React.CSSProperties}
+      data-inline-right-panel="side-panel"
+      style={
+        {
+          "--sidebar-width": sidePanelExpanded
+            ? `calc(100vw - ${formatPixelWidth(sidePanelExpandedLeftOffset)} - ${fixedRightOffset})`
+            : width,
+        } as React.CSSProperties
+      }
     >
       <Sidebar
         side="right"
@@ -252,14 +316,33 @@ const DiffPanelInlineSidebar = (props: {
             height: `calc(100svh - ${CHAT_HEADER_HEIGHT} - ${bottomInset})`,
           } as React.CSSProperties
         }
-        resizable={{
-          minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
-          onResize: onResizeDiffPanel,
-          shouldAcceptWidth: shouldAcceptInlineSidebarWidth,
-          storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
-        }}
+        {...(sidePanelExpanded
+          ? {}
+          : {
+              resizable: {
+                minWidth: SIDE_PANEL_INLINE_SIDEBAR_MIN_WIDTH,
+                onResize: onResizeSidePanel,
+                shouldAcceptWidth: shouldAcceptInlineSidebarWidth,
+                storageKey: SIDE_PANEL_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+              },
+            })}
       >
-        {renderDiffContent ? <LazyDiffPanel mode="sidebar" /> : null}
+        <ThreadSidePanel
+          activeTabId={activeTabId}
+          browserPanelId={`thread-browser:${threadKey}`}
+          cwd={cwd}
+          environmentId={environmentId}
+          expanded={sidePanelExpanded}
+          tabIds={tabIds}
+          onCloseTab={onCloseTab}
+          onExpandedChange={onExpandedChange}
+          onOpenBrowser={onOpenBrowser}
+          onOpenFile={onOpenFile}
+          onOpenReview={onOpenReview}
+          onSelectTab={onSelectTab}
+          reviewContent={renderReviewContent ? <LazyDiffPanel mode="sidebar" /> : null}
+          summaryContent={summaryContent}
+        />
         <SidebarRail />
       </Sidebar>
     </SidebarProvider>
@@ -350,6 +433,7 @@ function ChatThreadRouteView() {
   });
   const activeCwd =
     serverThread?.worktreePath ?? draftThread?.worktreePath ?? activeProject?.cwd ?? null;
+  const [planSummaryContent, setPlanSummaryContent] = useState<React.ReactNode | null>(null);
   const availableEditors = useServerAvailableEditors();
   const threadExists = useStore((store) => selectThreadExistsByRef(store, threadRef));
   const environmentHasServerThreads = useStore(
@@ -367,7 +451,18 @@ function ChatThreadRouteView() {
   const routeThreadExists = threadExists || draftThreadExists;
   const serverThreadStarted = threadHasStarted(serverThread);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
-  const diffOpen = search.diff === "1";
+  const sidePanelOpen = search.sidePanel === "1";
+  const sidePanelExpanded = sidePanelOpen && search.sidePanelExpanded === "1";
+  const sidePanelDynamicTabs = parseSidePanelTabs(search.sidePanelTabs);
+  const sidePanelTabIds = useMemo<SidePanelTabId[]>(
+    () => [SIDE_PANEL_SUMMARY_TAB_ID, ...sidePanelDynamicTabs],
+    [sidePanelDynamicTabs],
+  );
+  const activeSidePanelTabId =
+    search.sidePanelTab && sidePanelTabIds.includes(search.sidePanelTab)
+      ? search.sidePanelTab
+      : SIDE_PANEL_SUMMARY_TAB_ID;
+  const reviewTabOpen = sidePanelTabIds.includes(SIDE_PANEL_REVIEW_TAB_ID);
   const fileTreeOpen = search.fileTree === "1";
   const terminalOpen = useTerminalStateStore(
     (state) => selectThreadTerminalState(state.terminalStateByThreadKey, threadRef).terminalOpen,
@@ -379,13 +474,17 @@ function ChatThreadRouteView() {
   const terminalBottomInset = terminalOpen
     ? formatPixelWidth(liveTerminalHeight ?? terminalHeight)
     : "0px";
-  const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
-  const [diffInlineSidebarWidth, setDiffInlineSidebarWidth] = useState(() =>
+  const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const [sidePanelInlineSidebarWidth, setSidePanelInlineSidebarWidth] = useState(() =>
     getInitialInlineSidebarWidth({
-      defaultWidth: DIFF_INLINE_DEFAULT_WIDTH,
-      minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
-      storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+      defaultWidth: SIDE_PANEL_INLINE_DEFAULT_WIDTH,
+      fallbackStorageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+      minWidth: SIDE_PANEL_INLINE_SIDEBAR_MIN_WIDTH,
+      storageKey: SIDE_PANEL_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
     }),
+  );
+  const [sidePanelExpandedLeftOffset, setSidePanelExpandedLeftOffset] = useState(() =>
+    readChatInsetLeftOffset(),
   );
   const [fileTreeInlineSidebarWidth, setFileTreeInlineSidebarWidth] = useState(() =>
     getInitialInlineSidebarWidth({
@@ -401,12 +500,12 @@ function ChatThreadRouteView() {
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
   const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
     threadKey: currentThreadKey,
-    hasOpenedDiff: diffOpen,
+    hasOpenedDiff: reviewTabOpen,
   }));
   const hasOpenedDiff =
     diffPanelMountState.threadKey === currentThreadKey
       ? diffPanelMountState.hasOpenedDiff
-      : diffOpen;
+      : reviewTabOpen;
   const markDiffOpened = useCallback(() => {
     setDiffPanelMountState((previous) => {
       if (previous.threadKey === currentThreadKey && previous.hasOpenedDiff) {
@@ -418,33 +517,112 @@ function ChatThreadRouteView() {
       };
     });
   }, [currentThreadKey]);
-  const closeDiff = useCallback(() => {
+  const updateSidePanelSearch = useCallback(
+    (input: {
+      open: boolean;
+      activeTabId: SidePanelTabId;
+      expanded?: boolean;
+      tabIds: ReadonlyArray<SidePanelTabId>;
+    }) => {
+      if (!threadRef) {
+        return;
+      }
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(threadRef),
+        search: (previous) => {
+          const previousExpanded = previous.sidePanelExpanded === "1";
+          const rest = stripDiffSearchParams(previous);
+          return {
+            ...rest,
+            sidePanel: input.open ? "1" : undefined,
+            sidePanelExpanded: input.open && (input.expanded ?? previousExpanded) ? "1" : undefined,
+            sidePanelTab: input.open ? input.activeTabId : undefined,
+            sidePanelTabs: input.open ? encodeSidePanelTabs(input.tabIds) : undefined,
+          };
+        },
+      });
+    },
+    [navigate, threadRef],
+  );
+  const openSidePanelTab = useCallback(
+    (tabId: SidePanelTabId) => {
+      const nextTabs = sidePanelTabIds.includes(tabId)
+        ? sidePanelTabIds
+        : [...sidePanelTabIds, tabId];
+      updateSidePanelSearch({ open: true, activeTabId: tabId, tabIds: nextTabs });
+    },
+    [sidePanelTabIds, updateSidePanelSearch],
+  );
+  const closeSidePanel = useCallback(() => {
     if (!threadRef) {
       return;
     }
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(threadRef),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: undefined };
-      },
+    updateSidePanelSearch({
+      open: false,
+      activeTabId: activeSidePanelTabId,
+      tabIds: sidePanelTabIds,
     });
-  }, [navigate, threadRef]);
-  const openDiff = useCallback(() => {
-    if (!threadRef) {
-      return;
-    }
+  }, [activeSidePanelTabId, sidePanelTabIds, threadRef, updateSidePanelSearch]);
+  const openSidePanel = useCallback(() => {
+    updateSidePanelSearch({
+      open: true,
+      activeTabId: activeSidePanelTabId,
+      tabIds: sidePanelTabIds,
+    });
+  }, [activeSidePanelTabId, sidePanelTabIds, updateSidePanelSearch]);
+  const updateSidePanelExpanded = useCallback(
+    (expanded: boolean) => {
+      updateSidePanelSearch({
+        open: true,
+        activeTabId: activeSidePanelTabId,
+        expanded,
+        tabIds: sidePanelTabIds,
+      });
+    },
+    [activeSidePanelTabId, sidePanelTabIds, updateSidePanelSearch],
+  );
+  const openReview = useCallback(() => {
     markDiffOpened();
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(threadRef),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
-      },
-    });
-  }, [markDiffOpened, navigate, threadRef]);
+    openSidePanelTab(SIDE_PANEL_REVIEW_TAB_ID);
+  }, [markDiffOpened, openSidePanelTab]);
+  const openSummary = useCallback(() => {
+    openSidePanelTab(SIDE_PANEL_SUMMARY_TAB_ID);
+  }, [openSidePanelTab]);
+  const openBrowser = useCallback(() => {
+    openSidePanelTab(SIDE_PANEL_BROWSER_TAB_ID);
+  }, [openSidePanelTab]);
+  const openFile = useCallback(
+    (relativePath: string) => {
+      openSidePanelTab(encodeFileSidePanelTabId(relativePath));
+    },
+    [openSidePanelTab],
+  );
+  const selectSidePanelTab = useCallback(
+    (tabId: SidePanelTabId) => {
+      updateSidePanelSearch({ open: true, activeTabId: tabId, tabIds: sidePanelTabIds });
+    },
+    [sidePanelTabIds, updateSidePanelSearch],
+  );
+  const closeSidePanelTab = useCallback(
+    (tabId: SidePanelTabId) => {
+      if (tabId === SIDE_PANEL_SUMMARY_TAB_ID) return;
+      const nextTabs = sidePanelTabIds.filter((candidate) => candidate !== tabId);
+      const nextActiveTabId = resolveNextSidePanelTab({
+        closingTabId: tabId,
+        activeTabId: activeSidePanelTabId,
+        tabIds: sidePanelTabIds,
+      });
+      updateSidePanelSearch({
+        open: true,
+        activeTabId: nextTabs.includes(nextActiveTabId)
+          ? nextActiveTabId
+          : SIDE_PANEL_SUMMARY_TAB_ID,
+        tabIds: nextTabs,
+      });
+    },
+    [activeSidePanelTabId, sidePanelTabIds, updateSidePanelSearch],
+  );
   const closeFileTree = useCallback(() => {
     if (!threadRef) {
       return;
@@ -465,23 +643,6 @@ function ChatThreadRouteView() {
       search: (previous) => ({ ...previous, fileTree: "1" }),
     });
   }, [navigate, threadRef]);
-  const openFileTreeFileDiff = useCallback(
-    (filePath: string) => {
-      if (!threadRef) {
-        return;
-      }
-      markDiffOpened();
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-        search: (previous) => {
-          const rest = stripDiffSearchParams(previous);
-          return { ...rest, diff: "1", diffFilePath: filePath };
-        },
-      });
-    },
-    [markDiffOpened, navigate, threadRef],
-  );
   const scheduleCombinedRightPanelResizeReset = useCallback(() => {
     if (combinedRightPanelResizeResetTimeoutRef.current !== null) {
       clearTimeout(combinedRightPanelResizeResetTimeoutRef.current);
@@ -489,50 +650,52 @@ function ChatThreadRouteView() {
     combinedRightPanelResizeResetTimeoutRef.current = setTimeout(() => {
       combinedRightPanelResizeTotalRef.current = null;
       combinedRightPanelResizeResetTimeoutRef.current = null;
-      setInlineRightPanelTransitionDuration("diff", null);
+      setInlineRightPanelTransitionDuration("side-panel", null);
     }, 180);
   }, []);
-  const updateDiffInlineSidebarWidth = useCallback((width: number) => {
+  const updateSidePanelInlineSidebarWidth = useCallback((width: number) => {
     combinedRightPanelResizeTotalRef.current = null;
     if (combinedRightPanelResizeResetTimeoutRef.current !== null) {
       clearTimeout(combinedRightPanelResizeResetTimeoutRef.current);
       combinedRightPanelResizeResetTimeoutRef.current = null;
     }
-    setDiffInlineSidebarWidth(formatPixelWidth(Math.max(DIFF_INLINE_SIDEBAR_MIN_WIDTH, width)));
+    setSidePanelInlineSidebarWidth(
+      formatPixelWidth(Math.max(SIDE_PANEL_INLINE_SIDEBAR_MIN_WIDTH, width)),
+    );
   }, []);
   const updateFileTreeInlineSidebarWidth = useCallback(
     (width: number) => {
       const requestedFileTreeWidth = Math.max(FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH, width);
-      if (diffOpen && fileTreeOpen) {
-        const currentDiffWidth =
-          parsePixelWidth(diffInlineSidebarWidth) ??
-          readInlineRightPanelWidth("diff") ??
-          DIFF_INLINE_SIDEBAR_MIN_WIDTH;
+      if (sidePanelOpen && fileTreeOpen) {
+        const currentSidePanelWidth =
+          parsePixelWidth(sidePanelInlineSidebarWidth) ??
+          readInlineRightPanelWidth("side-panel") ??
+          SIDE_PANEL_INLINE_SIDEBAR_MIN_WIDTH;
         const currentFileTreeWidth =
           parsePixelWidth(fileTreeInlineSidebarWidth) ??
           readInlineRightPanelWidth("file-tree") ??
           requestedFileTreeWidth;
         const combinedWidth =
-          combinedRightPanelResizeTotalRef.current ?? currentDiffWidth + currentFileTreeWidth;
+          combinedRightPanelResizeTotalRef.current ?? currentSidePanelWidth + currentFileTreeWidth;
         combinedRightPanelResizeTotalRef.current = combinedWidth;
 
         const maximumFileTreeWidth = Math.max(
           FILE_TREE_INLINE_SIDEBAR_MIN_WIDTH,
-          combinedWidth - DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+          combinedWidth - SIDE_PANEL_INLINE_SIDEBAR_MIN_WIDTH,
         );
         const nextFileTreeWidth = Math.min(requestedFileTreeWidth, maximumFileTreeWidth);
-        const nextDiffWidth = Math.max(
-          DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+        const nextSidePanelWidth = Math.max(
+          SIDE_PANEL_INLINE_SIDEBAR_MIN_WIDTH,
           combinedWidth - nextFileTreeWidth,
         );
 
         scheduleCombinedRightPanelResizeReset();
-        setInlineRightPanelTransitionDuration("diff", "0ms");
-        applyInlineRightPanelWidth("diff", nextDiffWidth);
+        setInlineRightPanelTransitionDuration("side-panel", "0ms");
+        applyInlineRightPanelWidth("side-panel", nextSidePanelWidth);
         applyInlineRightPanelWidth("file-tree", nextFileTreeWidth);
-        applyDiffPanelRightOffset(nextFileTreeWidth);
+        applySidePanelRightOffset(nextFileTreeWidth);
         setFileTreeInlineSidebarWidth(formatPixelWidth(nextFileTreeWidth));
-        setDiffInlineSidebarWidth(formatPixelWidth(nextDiffWidth));
+        setSidePanelInlineSidebarWidth(formatPixelWidth(nextSidePanelWidth));
         return;
       }
 
@@ -540,11 +703,11 @@ function ChatThreadRouteView() {
       setFileTreeInlineSidebarWidth(formatPixelWidth(requestedFileTreeWidth));
     },
     [
-      diffInlineSidebarWidth,
-      diffOpen,
       fileTreeInlineSidebarWidth,
       fileTreeOpen,
       scheduleCombinedRightPanelResizeReset,
+      sidePanelInlineSidebarWidth,
+      sidePanelOpen,
     ],
   );
   const addPathMentionToDraft = useCallback(
@@ -565,6 +728,28 @@ function ChatThreadRouteView() {
   useEffect(() => {
     setLiveTerminalHeight(null);
   }, [currentThreadKey, terminalOpen]);
+
+  useLayoutEffect(() => {
+    if (!sidePanelExpanded) {
+      return;
+    }
+
+    const updateLeftOffset = () => {
+      setSidePanelExpandedLeftOffset(readChatInsetLeftOffset());
+    };
+    updateLeftOffset();
+    window.addEventListener("resize", updateLeftOffset);
+    const inset = document.querySelector<HTMLElement>("[data-slot='sidebar-inset']");
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateLeftOffset);
+    if (inset) {
+      resizeObserver?.observe(inset);
+    }
+    return () => {
+      window.removeEventListener("resize", updateLeftOffset);
+      resizeObserver?.disconnect();
+    };
+  }, [sidePanelExpanded]);
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
@@ -595,50 +780,69 @@ function ChatThreadRouteView() {
     return null;
   }
 
-  const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
+  const shouldRenderDiffContent = reviewTabOpen || hasOpenedDiff;
   const fileTreeContent = threadRef ? (
     <LazyFileTreePanel
-      mode={shouldUseDiffSheet ? "sheet" : "sidebar"}
+      mode={shouldUseRightPanelSheet ? "sheet" : "sidebar"}
       environmentId={threadRef.environmentId}
       cwd={activeCwd}
       availableEditors={availableEditors}
       onClose={closeFileTree}
-      onOpenFileDiff={openFileTreeFileDiff}
+      onOpenFileInPanel={openFile}
       onAddPathMention={addPathMentionToDraft}
     />
   ) : null;
-  const mainContentRightInset =
-    diffOpen && fileTreeOpen
-      ? `calc(${diffInlineSidebarWidth} + ${fileTreeInlineSidebarWidth})`
-      : diffOpen
-        ? diffInlineSidebarWidth
+  const mainContentRightInset = sidePanelExpanded
+    ? undefined
+    : sidePanelOpen && fileTreeOpen
+      ? `calc(${sidePanelInlineSidebarWidth} + ${fileTreeInlineSidebarWidth})`
+      : sidePanelOpen
+        ? sidePanelInlineSidebarWidth
         : fileTreeOpen
           ? fileTreeInlineSidebarWidth
           : undefined;
 
-  if (!shouldUseDiffSheet) {
+  if (!shouldUseRightPanelSheet) {
     return (
       <>
-        <SidebarInset className="h-dvh  min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+        <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
           <ChatView
             environmentId={threadRef.environmentId}
             threadId={threadRef.threadId}
+            mainContentHidden={sidePanelExpanded}
             mainContentRightInset={mainContentRightInset}
-            onDiffPanelOpen={markDiffOpened}
+            onDiffPanelOpen={openReview}
+            onPlanPanelOpen={openSummary}
+            onPlanPanelClose={closeSidePanel}
+            onPlanSummaryContentChange={setPlanSummaryContent}
             onTerminalLiveHeightChange={setLiveTerminalHeight}
-            reserveTitleBarControlInset={!diffOpen && !fileTreeOpen}
+            reserveTitleBarControlInset={!sidePanelOpen && !fileTreeOpen}
             routeKind="server"
           />
         </SidebarInset>
-        <DiffPanelInlineSidebar
+        <ThreadSidePanelInlineSidebar
+          activeTabId={activeSidePanelTabId}
           bottomInset={terminalBottomInset}
-          diffOpen={diffOpen}
+          cwd={activeCwd}
+          environmentId={threadRef.environmentId}
           fixedRightOffset={fileTreeOpen ? fileTreeInlineSidebarWidth : "0px"}
-          onCloseDiff={closeDiff}
-          onOpenDiff={openDiff}
-          onResizeDiffPanel={updateDiffInlineSidebarWidth}
-          renderDiffContent={shouldRenderDiffContent}
-          width={diffInlineSidebarWidth}
+          onCloseSidePanel={closeSidePanel}
+          onCloseTab={closeSidePanelTab}
+          onExpandedChange={updateSidePanelExpanded}
+          onOpenBrowser={openBrowser}
+          onOpenFile={openFile}
+          onOpenReview={openReview}
+          onOpenSidePanel={openSidePanel}
+          onResizeSidePanel={updateSidePanelInlineSidebarWidth}
+          onSelectTab={selectSidePanelTab}
+          renderReviewContent={shouldRenderDiffContent}
+          sidePanelExpanded={sidePanelExpanded}
+          sidePanelExpandedLeftOffset={sidePanelExpandedLeftOffset}
+          sidePanelOpen={sidePanelOpen}
+          summaryContent={planSummaryContent}
+          tabIds={sidePanelTabIds}
+          threadKey={currentThreadKey ?? "unknown"}
+          width={sidePanelInlineSidebarWidth}
         />
         <FileTreePanelInlineSidebar
           bottomInset={terminalBottomInset}
@@ -660,13 +864,34 @@ function ChatThreadRouteView() {
         <ChatView
           environmentId={threadRef.environmentId}
           threadId={threadRef.threadId}
-          onDiffPanelOpen={markDiffOpened}
+          onDiffPanelOpen={openReview}
+          onPlanPanelOpen={openSummary}
+          onPlanPanelClose={closeSidePanel}
+          onPlanSummaryContentChange={setPlanSummaryContent}
           onTerminalLiveHeightChange={setLiveTerminalHeight}
           routeKind="server"
         />
       </SidebarInset>
-      <RightPanelSheet bottomInset={terminalBottomInset} open={diffOpen} onClose={closeDiff}>
-        {shouldRenderDiffContent && !fileTreeOpen ? <LazyDiffPanel mode="sheet" /> : null}
+      <RightPanelSheet
+        bottomInset={terminalBottomInset}
+        open={sidePanelOpen}
+        onClose={closeSidePanel}
+      >
+        <ThreadSidePanel
+          activeTabId={activeSidePanelTabId}
+          browserPanelId={`thread-browser:${currentThreadKey ?? "unknown"}`}
+          cwd={activeCwd}
+          environmentId={threadRef.environmentId}
+          expanded={false}
+          tabIds={sidePanelTabIds}
+          onCloseTab={closeSidePanelTab}
+          onOpenBrowser={openBrowser}
+          onOpenFile={openFile}
+          onOpenReview={openReview}
+          onSelectTab={selectSidePanelTab}
+          reviewContent={shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
+          summaryContent={planSummaryContent}
+        />
       </RightPanelSheet>
       <RightPanelSheet
         bottomInset={terminalBottomInset}
@@ -682,7 +907,18 @@ function ChatThreadRouteView() {
 export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
   validateSearch: (search) => parseDiffRouteSearch(search),
   search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff", "fileTree"])],
+    middlewares: [
+      retainSearchParams<DiffRouteSearch>([
+        "sidePanel",
+        "sidePanelExpanded",
+        "sidePanelTab",
+        "sidePanelTabs",
+        "diffTurnId",
+        "diffFilePath",
+        "diffScope",
+        "fileTree",
+      ]),
+    ],
   },
   component: ChatThreadRouteView,
 });

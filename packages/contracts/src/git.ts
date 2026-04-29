@@ -44,6 +44,8 @@ const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
+export const GitDiffScope = Schema.Literals(["unstaged", "staged", "branch"]);
+export type GitDiffScope = typeof GitDiffScope.Type;
 export const GitHostingProviderKind = Schema.Literals(["github", "gitlab", "unknown"]);
 export type GitHostingProviderKind = typeof GitHostingProviderKind.Type;
 export const GitHostingProvider = Schema.Struct({
@@ -151,6 +153,12 @@ export const GitPullRequestRefInput = Schema.Struct({
 });
 export type GitPullRequestRefInput = typeof GitPullRequestRefInput.Type;
 
+export const GitDiffInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  scope: GitDiffScope,
+});
+export type GitDiffInput = typeof GitDiffInput.Type;
+
 export const GitPreparePullRequestThreadInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   reference: GitPullRequestReference,
@@ -252,6 +260,11 @@ export const GitStatusStreamEvent = Schema.Union([
   }),
 ]);
 export type GitStatusStreamEvent = typeof GitStatusStreamEvent.Type;
+
+export const GitDiffResult = Schema.Struct({
+  diff: Schema.String,
+});
+export type GitDiffResult = typeof GitDiffResult.Type;
 
 export const GitListBranchesResult = Schema.Struct({
   branches: Schema.Array(GitBranch),

@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type GitDiffScope,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   ThreadId,
@@ -17,6 +18,13 @@ interface CheckpointDiffQueryInput {
   enabled?: boolean;
 }
 
+interface GitDiffQueryInput {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+  scope: GitDiffScope | null;
+  enabled?: boolean;
+}
+
 export const providerQueryKeys = {
   all: ["providers"] as const,
   checkpointDiff: (input: CheckpointDiffQueryInput) =>
@@ -29,6 +37,8 @@ export const providerQueryKeys = {
       input.toTurnCount,
       input.cacheScope ?? null,
     ] as const,
+  gitDiff: (input: GitDiffQueryInput) =>
+    ["providers", "gitDiff", input.environmentId ?? null, input.cwd, input.scope] as const,
 };
 
 function decodeCheckpointDiffRequest(input: CheckpointDiffQueryInput) {
@@ -127,5 +137,20 @@ export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
       isCheckpointTemporarilyUnavailable(error)
         ? Math.min(5_000, 250 * 2 ** (attempt - 1))
         : Math.min(1_000, 100 * 2 ** (attempt - 1)),
+  });
+}
+
+export function gitDiffQueryOptions(input: GitDiffQueryInput) {
+  return queryOptions({
+    queryKey: providerQueryKeys.gitDiff(input),
+    queryFn: async () => {
+      if (!input.environmentId || !input.cwd || !input.scope) {
+        throw new Error("Git diff is unavailable.");
+      }
+      const api = ensureEnvironmentApi(input.environmentId);
+      return await api.git.getDiff({ cwd: input.cwd, scope: input.scope });
+    },
+    enabled: (input.enabled ?? true) && !!input.environmentId && !!input.cwd && !!input.scope,
+    staleTime: 2_000,
   });
 }

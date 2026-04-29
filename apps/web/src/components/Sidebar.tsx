@@ -5,6 +5,7 @@ import {
   CloudIcon,
   GitPullRequestIcon,
   PlusIcon,
+  PanelLeftCloseIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -145,6 +146,7 @@ import {
   SidebarMenuSubItem,
   SidebarSeparator,
   SidebarTrigger,
+  useSidebar,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
@@ -2514,8 +2516,9 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
 }) {
+  const { setOpen } = useSidebar();
   const wordmark = (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-1 items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
       <Tooltip>
         <TooltipTrigger
@@ -2541,13 +2544,36 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
       </Tooltip>
     </div>
   );
+  const closeButton = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            className="hidden shrink-0 text-muted-foreground hover:text-foreground md:inline-flex"
+            aria-label="Close projects and threads panel"
+            onClick={() => setOpen(false)}
+          />
+        }
+      >
+        <PanelLeftCloseIcon className="size-4" />
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">Close panel</TooltipPopup>
+    </Tooltip>
+  );
 
   return isElectron ? (
     <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px] wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]">
       {wordmark}
+      {closeButton}
     </SidebarHeader>
   ) : (
-    <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">{wordmark}</SidebarHeader>
+    <SidebarHeader className="h-[52px] flex-row items-center gap-2 px-4 py-0">
+      {wordmark}
+      {closeButton}
+    </SidebarHeader>
   );
 });
 

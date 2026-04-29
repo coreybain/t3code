@@ -155,6 +155,7 @@ export interface SidebarThreadSummary {
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
   hasActionableProposedPlan: boolean;
+  hasCheckpointedFileChanges?: boolean;
 }
 
 export interface ThreadSession {

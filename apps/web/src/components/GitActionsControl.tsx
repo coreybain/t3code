@@ -37,7 +37,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Group, GroupSeparator } from "~/components/ui/group";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
@@ -493,11 +493,11 @@ export default function GitActionsControl({
       });
       return;
     }
-    const prUrl = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr.url : null;
+    const prUrl = gitStatusForActions?.pr?.url ?? null;
     if (!prUrl) {
       toastManager.add({
         type: "error",
-        title: "No open PR found.",
+        title: "No linked PR found.",
         data: threadToastData,
       });
       return;
@@ -939,6 +939,9 @@ export default function GitActionsControl({
 
   if (!gitCwd) return null;
 
+  const closedLinkedPr =
+    gitStatusForActions?.pr?.state === "closed" ? gitStatusForActions.pr : null;
+
   return (
     <>
       {!isRepo ? (
@@ -1045,6 +1048,15 @@ export default function GitActionsControl({
                   </MenuItem>
                 );
               })}
+              {closedLinkedPr ? (
+                <>
+                  <MenuSeparator />
+                  <MenuItem onClick={() => void openExistingPr()}>
+                    <GitHubIcon />
+                    View closed PR
+                  </MenuItem>
+                </>
+              ) : null}
               {gitStatusForActions?.branch === null && (
                 <p className="px-2 py-1.5 text-xs text-warning">
                   Detached HEAD: create and checkout a branch to enable push and PR actions.

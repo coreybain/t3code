@@ -44,7 +44,7 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (pr.state === "closed") {
     return {
       label: "PR closed",
-      colorClass: "text-zinc-500 dark:text-zinc-400/80",
+      colorClass: "text-red-600 dark:text-red-300/90",
       tooltip: `#${pr.number} PR closed: ${pr.title}`,
       url: pr.url,
     };
@@ -68,7 +68,12 @@ export function resolveThreadPr(
     return null;
   }
 
-  return gitStatus.pr ?? null;
+  const pr = gitStatus.pr;
+  if (!pr || pr.state === "merged" || pr.headBranch !== threadBranch) {
+    return null;
+  }
+
+  return pr;
 }
 
 export function terminalStatusFromRunningIds(

@@ -9,14 +9,16 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, FolderTreeIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon, FolderTreeIcon, PanelLeftOpenIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
-import { SidebarTrigger } from "../ui/sidebar";
+import { SidebarTrigger, useSidebar } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
+import { Button } from "../ui/button";
+import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -44,6 +46,7 @@ interface ChatHeaderProps {
   fileTreeAvailable: boolean;
   fileTreeOpen: boolean;
   diffOpen: boolean;
+  hasPlanInSidePanel: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -76,6 +79,7 @@ export const ChatHeader = memo(function ChatHeader({
   fileTreeAvailable,
   fileTreeOpen,
   diffOpen,
+  hasPlanInSidePanel,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -87,11 +91,31 @@ export const ChatHeader = memo(function ChatHeader({
 }: ChatHeaderProps) {
   const showDraftProjectPicker =
     activeProjectKey !== null && draftProjectOptions.length > 1 && activeProjectName !== undefined;
+  const { open: leftPanelOpen, setOpen: setLeftPanelOpen } = useSidebar();
 
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+        {!leftPanelOpen ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  className="hidden shrink-0 text-muted-foreground hover:text-foreground md:inline-flex"
+                  aria-label="Open projects and threads panel"
+                  onClick={() => setLeftPanelOpen(true)}
+                />
+              }
+            >
+              <PanelLeftOpenIcon className="size-4" />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Open panel</TooltipPopup>
+          </Tooltip>
+        ) : null}
         <h2
           className="min-w-0 shrink truncate text-sm font-medium text-foreground"
           title={activeThreadTitle}
@@ -212,10 +236,14 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0"
+                className={cn(
+                  "shrink-0",
+                  hasPlanInSidePanel &&
+                    "border-blue-500/40 text-blue-400 hover:text-blue-300 data-pressed:bg-blue-500/10",
+                )}
                 pressed={diffOpen}
                 onPressedChange={onToggleDiff}
-                aria-label="Toggle diff panel"
+                aria-label="Toggle Side Panel"
                 variant="outline"
                 size="xs"
               >
@@ -225,8 +253,8 @@ export const ChatHeader = memo(function ChatHeader({
           />
           <TooltipPopup side="bottom">
             {diffToggleShortcutLabel
-              ? `Toggle diff panel (${diffToggleShortcutLabel})`
-              : "Toggle diff panel"}
+              ? `Toggle Side Panel (${diffToggleShortcutLabel})`
+              : "Toggle Side Panel"}
           </TooltipPopup>
         </Tooltip>
       </div>

@@ -17,11 +17,15 @@ import type {
   GitStatusInput,
   GitStatusResult,
   GitCreateBranchResult,
+  GitDiffInput,
+  GitDiffResult,
 } from "./git.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type {
   ProjectListEntriesInput,
   ProjectListEntriesResult,
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
@@ -150,6 +154,34 @@ export interface PickFolderOptions {
   initialPath?: string | null;
 }
 
+export interface BrowserPanelBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BrowserPanelState {
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  errorMessage?: string;
+}
+
+export interface BrowserPanelInput {
+  panelId: string;
+}
+
+export interface BrowserPanelAttachInput extends BrowserPanelInput {
+  bounds: BrowserPanelBounds;
+}
+
+export interface BrowserPanelNavigateInput extends BrowserPanelInput {
+  url: string;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -179,6 +211,20 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  browserPanel?: {
+    create: (input: BrowserPanelInput) => Promise<void>;
+    attach: (input: BrowserPanelAttachInput) => Promise<void>;
+    detach: (input: BrowserPanelInput) => Promise<void>;
+    destroy: (input: BrowserPanelInput) => Promise<void>;
+    navigate: (input: BrowserPanelNavigateInput) => Promise<void>;
+    reload: (input: BrowserPanelInput) => Promise<void>;
+    goBack: (input: BrowserPanelInput) => Promise<void>;
+    goForward: (input: BrowserPanelInput) => Promise<void>;
+    openDevTools: (input: BrowserPanelInput) => Promise<void>;
+    closeDevTools: (input: BrowserPanelInput) => Promise<void>;
+    getState: (input: BrowserPanelInput) => Promise<BrowserPanelState>;
+    onState: (input: BrowserPanelInput, listener: (state: BrowserPanelState) => void) => () => void;
+  };
 }
 
 /**
@@ -249,6 +295,7 @@ export interface EnvironmentApi {
   projects: {
     listEntries: (input: ProjectListEntriesInput) => Promise<ProjectListEntriesResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
+    readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
   filesystem: {
@@ -266,6 +313,7 @@ export interface EnvironmentApi {
       input: GitPreparePullRequestThreadInput,
     ) => Promise<GitPreparePullRequestThreadResult>;
     pull: (input: GitPullInput) => Promise<GitPullResult>;
+    getDiff: (input: GitDiffInput) => Promise<GitDiffResult>;
     refreshStatus: (input: GitStatusInput) => Promise<GitStatusResult>;
     onStatus: (
       input: GitStatusInput,

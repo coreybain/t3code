@@ -19,6 +19,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     projects: {
       listEntries: rpcClient.projects.listEntries,
       searchEntries: rpcClient.projects.searchEntries,
+      readFile: rpcClient.projects.readFile,
       writeFile: rpcClient.projects.writeFile,
     },
     filesystem: {
@@ -26,6 +27,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     },
     git: {
       pull: rpcClient.git.pull,
+      getDiff: rpcClient.git.getDiff,
       refreshStatus: rpcClient.git.refreshStatus,
       onStatus: (input, callback, options) => rpcClient.git.onStatus(input, callback, options),
       listBranches: rpcClient.git.listBranches,

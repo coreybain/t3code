@@ -15,6 +15,7 @@ import {
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   ProjectListEntriesError,
+  ProjectReadFileError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
@@ -806,6 +807,22 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.projectsReadFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsReadFile,
+            workspaceFileSystem.readFile(input).pipe(
+              Effect.mapError((cause) => {
+                const message = Schema.is(WorkspacePathOutsideRootError)(cause)
+                  ? "Workspace file path must stay within the project root."
+                  : `Failed to read workspace file: ${cause.detail}`;
+                return new ProjectReadFileError({
+                  message,
+                  cause,
+                });
+              }),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
@@ -866,6 +883,45 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
               }),
             ),
+            { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.gitGetDiff]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitGetDiff,
+            Effect.gen(function* () {
+              if (input.scope === "branch") {
+                const details = yield* git.statusDetails(input.cwd);
+                const defaultRefResult = yield* git.execute({
+                  cwd: input.cwd,
+                  operation: "GitCore.diff.defaultRef",
+                  args: ["symbolic-ref", "refs/remotes/origin/HEAD"],
+                  allowNonZeroExit: true,
+                });
+                const defaultBranch =
+                  defaultRefResult.code === 0
+                    ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
+                    : null;
+                const baseBranch =
+                  details.upstreamRef ??
+                  (details.hasOriginRemote && defaultBranch ? `origin/${defaultBranch}` : null);
+                if (!baseBranch) {
+                  return { diff: "" };
+                }
+                const rangeContext = yield* git.readRangeContext(input.cwd, baseBranch);
+                return { diff: rangeContext.diffPatch };
+              }
+
+              const args =
+                input.scope === "staged"
+                  ? ["diff", "--cached", "--patch", "--minimal", "--no-color"]
+                  : ["diff", "--patch", "--minimal", "--no-color"];
+              const result = yield* git.execute({
+                cwd: input.cwd,
+                operation: `GitCore.diff.${input.scope}`,
+                args,
+              });
+              return { diff: result.stdout };
+            }),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>

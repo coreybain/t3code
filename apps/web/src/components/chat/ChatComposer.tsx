@@ -268,8 +268,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             onClick={props.onTogglePlanSidebar}
             title={
               props.planSidebarOpen
-                ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
-                : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`
+                ? `Hide ${props.planSidebarLabel.toLowerCase()} summary`
+                : `Show ${props.planSidebarLabel.toLowerCase()} summary`
             }
           >
             <ListTodoIcon />
@@ -854,7 +854,7 @@ export const ChatComposer = memo(
       (showPlanFollowUpPrompt && activeProposedPlan !== null);
 
     const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
-    const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
+    const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan);
     const composerFooterActionLayoutKey = useMemo(() => {
       if (activePendingProgress) {
         return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;

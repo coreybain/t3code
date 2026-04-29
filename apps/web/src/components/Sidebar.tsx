@@ -3,13 +3,17 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   CloudIcon,
+  ClockIcon,
   GitPullRequestIcon,
+  PinIcon,
+  PinOffIcon,
   PlusIcon,
   PanelLeftCloseIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
+  TrashIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import {
@@ -39,6 +43,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
+  DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
   type ScopedThreadRef,
@@ -62,10 +67,12 @@ import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isMacPlatform, newCommandId } from "../lib/utils";
+import { isMacPlatform, newCommandId, newThreadId } from "../lib/utils";
+import { createModelSelection } from "@t3tools/shared/model";
 import {
   selectProjectByRef,
   selectProjectsAcrossEnvironments,
+  selectSidebarChatThreadsAcrossEnvironments,
   selectSidebarThreadsForProjectRefs,
   selectSidebarThreadsAcrossEnvironments,
   selectThreadByRef,
@@ -203,6 +210,7 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   duration: 180,
   easing: "ease-out",
 } as const;
+const TEMPORARY_CHAT_TTL_MS = 24 * 60 * 60 * 1_000;
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
 type SidebarPanel = "projects" | "chats" | "tickets";
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
@@ -261,6 +269,100 @@ function buildThreadJumpLabelMap(input: {
     }
   }
   return mapping.size > 0 ? mapping : EMPTY_THREAD_JUMP_LABELS;
+}
+
+function compareSidebarChatThreads(
+  left: SidebarThreadSummary,
+  right: SidebarThreadSummary,
+): number {
+  const leftPinnedAt = left.pinnedAt ?? null;
+  const rightPinnedAt = right.pinnedAt ?? null;
+  if (leftPinnedAt !== null || rightPinnedAt !== null) {
+    if (leftPinnedAt === null) return 1;
+    if (rightPinnedAt === null) return -1;
+    return rightPinnedAt.localeCompare(leftPinnedAt) || right.id.localeCompare(left.id);
+  }
+  const leftActivity = left.latestUserMessageAt ?? left.updatedAt ?? left.createdAt;
+  const rightActivity = right.latestUserMessageAt ?? right.updatedAt ?? right.createdAt;
+  return rightActivity.localeCompare(leftActivity) || right.id.localeCompare(left.id);
+}
+
+function getSidebarChatActivityAt(thread: SidebarThreadSummary): string {
+  return thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt;
+}
+
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function startOfLocalWeek(date: Date): Date {
+  const start = startOfLocalDay(date);
+  const day = start.getDay();
+  const daysSinceMonday = day === 0 ? 6 : day - 1;
+  start.setDate(start.getDate() - daysSinceMonday);
+  return start;
+}
+
+type SidebarChatThreadGroupId =
+  | "pinned"
+  | "today"
+  | "yesterday"
+  | "this-week"
+  | "last-week"
+  | "older";
+
+interface SidebarChatThreadGroup {
+  readonly id: SidebarChatThreadGroupId;
+  readonly label: string;
+  readonly threads: readonly SidebarThreadSummary[];
+}
+
+function groupSidebarChatThreads(
+  threads: readonly SidebarThreadSummary[],
+  now: Date = new Date(),
+): SidebarChatThreadGroup[] {
+  const pinned = threads.filter((thread) => thread.pinnedAt).toSorted(compareSidebarChatThreads);
+  const unpinned = threads.filter((thread) => !thread.pinnedAt).toSorted(compareSidebarChatThreads);
+
+  const todayStart = startOfLocalDay(now);
+  const yesterdayStart = new Date(todayStart);
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  const thisWeekStart = startOfLocalWeek(now);
+  const lastWeekStart = new Date(thisWeekStart);
+  lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+
+  const buckets: Record<Exclude<SidebarChatThreadGroupId, "pinned">, SidebarThreadSummary[]> = {
+    today: [],
+    yesterday: [],
+    "this-week": [],
+    "last-week": [],
+    older: [],
+  };
+
+  for (const thread of unpinned) {
+    const activityMs = Date.parse(getSidebarChatActivityAt(thread));
+    const activityDate = Number.isFinite(activityMs) ? new Date(activityMs) : new Date(0);
+    if (activityDate >= todayStart) {
+      buckets.today.push(thread);
+    } else if (activityDate >= yesterdayStart) {
+      buckets.yesterday.push(thread);
+    } else if (activityDate >= thisWeekStart) {
+      buckets["this-week"].push(thread);
+    } else if (activityDate >= lastWeekStart) {
+      buckets["last-week"].push(thread);
+    } else {
+      buckets.older.push(thread);
+    }
+  }
+
+  return [
+    ...(pinned.length > 0 ? [{ id: "pinned" as const, label: "Pinned", threads: pinned }] : []),
+    { id: "today" as const, label: "Today", threads: buckets.today },
+    { id: "yesterday" as const, label: "Yesterday", threads: buckets.yesterday },
+    { id: "this-week" as const, label: "This week", threads: buckets["this-week"] },
+    { id: "last-week" as const, label: "Last week", threads: buckets["last-week"] },
+    { id: "older" as const, label: "Older", threads: buckets.older },
+  ].filter((group) => group.threads.length > 0);
 }
 
 interface SidebarThreadRowProps {
@@ -352,8 +454,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadProjectCwd = useStore(
     useMemo(
       () => (state: import("../store").AppState) =>
-        selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId))?.cwd ??
-        null,
+        thread.projectId
+          ? (selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId))
+              ?.cwd ?? null)
+          : null,
       [thread.environmentId, thread.projectId],
     ),
   );
@@ -1083,6 +1187,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       project.memberProjects.map((member) => [member.physicalProjectKey, 0] as const),
     );
     for (const thread of projectThreads) {
+      if (!thread.projectId) {
+        continue;
+      }
       const member = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -1993,9 +2100,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const threadKey = scopedThreadKey(threadRef);
       const thread = sidebarThreadByKeyRef.current.get(threadKey) ?? null;
       if (!thread) return;
-      const threadProject = memberProjectByScopedKey.get(
-        scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
-      );
+      const threadProject = thread.projectId
+        ? memberProjectByScopedKey.get(
+            scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
+          )
+        : undefined;
       const threadWorkspacePath = thread.worktreePath ?? threadProject?.cwd ?? project.cwd ?? null;
       const clicked = await api.contextMenu.show(
         [
@@ -2649,6 +2758,218 @@ function SidebarPlaceholderPanel({ label }: { label: string }) {
   );
 }
 
+function formatTemporaryChatExpiry(expiresAt: string): string {
+  const expiresMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresMs)) {
+    return "Temporary";
+  }
+  const remainingMs = Math.max(0, expiresMs - Date.now());
+  const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1_000));
+  if (remainingHours <= 1) {
+    return "Expires within 1h";
+  }
+  return `Expires in ${remainingHours}h`;
+}
+
+const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
+  thread,
+  isActive,
+  onNavigate,
+  onRename,
+  onDelete,
+  onPin,
+  onUnpin,
+}: {
+  thread: SidebarThreadSummary;
+  isActive: boolean;
+  onNavigate: (threadRef: ScopedThreadRef) => void;
+  onRename: (threadRef: ScopedThreadRef, title: string) => Promise<void>;
+  onDelete: (threadRef: ScopedThreadRef) => Promise<void>;
+  onPin: (threadRef: ScopedThreadRef) => Promise<void>;
+  onUnpin: (threadRef: ScopedThreadRef) => Promise<void>;
+}) {
+  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+  const [renaming, setRenaming] = useState(false);
+  const [title, setTitle] = useState(thread.title);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const temporaryLabel = thread.temporaryExpiresAt
+    ? formatTemporaryChatExpiry(thread.temporaryExpiresAt)
+    : null;
+
+  useEffect(() => {
+    if (!renaming) {
+      setTitle(thread.title);
+    }
+  }, [renaming, thread.title]);
+
+  useEffect(() => {
+    if (renaming) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [renaming]);
+
+  const commitRename = useCallback(async () => {
+    const trimmed = title.trim();
+    setRenaming(false);
+    if (trimmed.length === 0 || trimmed === thread.title) {
+      setTitle(thread.title);
+      return;
+    }
+    await onRename(threadRef, trimmed);
+  }, [onRename, thread.title, threadRef, title]);
+
+  const handleClick = useCallback(() => {
+    if (!renaming) {
+      onNavigate(threadRef);
+    }
+  }, [onNavigate, renaming, threadRef]);
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (renaming) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      onNavigate(threadRef);
+    },
+    [onNavigate, renaming, threadRef],
+  );
+
+  const handleInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      event.stopPropagation();
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void commitRename();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        setTitle(thread.title);
+        setRenaming(false);
+      }
+    },
+    [commitRename, thread.title],
+  );
+
+  const handleContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault();
+      void (async () => {
+        const api = readLocalApi();
+        if (!api) return;
+        const clicked = await api.contextMenu.show(
+          [
+            {
+              id: thread.pinnedAt ? "unpin" : "pin",
+              label: thread.pinnedAt ? "Unpin chat" : "Pin chat",
+            },
+            { id: "rename", label: "Rename chat" },
+            { id: "delete", label: "Delete", destructive: true },
+          ],
+          { x: event.clientX, y: event.clientY },
+        );
+        if (clicked === "pin") {
+          await onPin(threadRef);
+        } else if (clicked === "unpin") {
+          await onUnpin(threadRef);
+        } else if (clicked === "rename") {
+          setRenaming(true);
+        } else if (clicked === "delete") {
+          await onDelete(threadRef);
+        }
+      })();
+    },
+    [onDelete, onPin, onUnpin, thread.pinnedAt, threadRef],
+  );
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        size="sm"
+        isActive={isActive}
+        data-testid={`chat-thread-row-${thread.id}`}
+        className="group/chat-row gap-2 px-2 py-1.5 text-left"
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        onContextMenu={handleContextMenu}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {thread.pinnedAt ? (
+            <PinIcon className="size-3 shrink-0 text-muted-foreground/60" />
+          ) : null}
+          {thread.temporaryExpiresAt ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="inline-flex shrink-0 items-center text-muted-foreground/60" />
+                }
+              >
+                <ClockIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{temporaryLabel}</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {renaming ? (
+            <input
+              ref={inputRef}
+              className="min-w-0 flex-1 truncate rounded border border-ring bg-transparent px-0.5 text-xs outline-none"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={handleInputKeyDown}
+              onBlur={() => void commitRename()}
+            />
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
+          )}
+        </div>
+        <span className="shrink-0 text-[10px] text-muted-foreground/40 group-hover/chat-row:hidden">
+          {formatRelativeTimeLabel(
+            thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+          )}
+        </span>
+        <span className="hidden shrink-0 items-center gap-0.5 group-hover/chat-row:flex">
+          <button
+            type="button"
+            aria-label={thread.pinnedAt ? "Unpin chat" : "Pin chat"}
+            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void (thread.pinnedAt ? onUnpin(threadRef) : onPin(threadRef));
+            }}
+          >
+            {thread.pinnedAt ? <PinOffIcon className="size-3" /> : <PinIcon className="size-3" />}
+          </button>
+          <button
+            type="button"
+            aria-label="Rename chat"
+            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setRenaming(true);
+            }}
+          >
+            <SquarePenIcon className="size-3" />
+          </button>
+          <button
+            type="button"
+            aria-label="Delete chat"
+            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-destructive/10 hover:text-destructive"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void onDelete(threadRef);
+            }}
+          >
+            <TrashIcon className="size-3" />
+          </button>
+        </span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+});
+
 interface SidebarProjectsContentProps {
   showArm64IntelBuildWarning: boolean;
   arm64IntelBuildWarningDescription: string | null;
@@ -2669,7 +2990,10 @@ interface SidebarProjectsContentProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  confirmAndDeleteThread: ReturnType<typeof useThreadActions>["confirmAndDeleteThread"];
   sortedProjects: readonly SidebarProjectSnapshot[];
+  chatThreads: readonly SidebarThreadSummary[];
+  primaryEnvironmentId: ReturnType<typeof usePrimaryEnvironmentId>;
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
@@ -2709,7 +3033,10 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleNewThread,
     archiveThread,
     deleteThread,
+    confirmAndDeleteThread,
     sortedProjects,
+    chatThreads,
+    primaryEnvironmentId,
     expandedThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
@@ -2744,13 +3071,107 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     },
     [updateSettings],
   );
+  const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>("projects");
+  const navigate = useNavigate();
+  const navigateToThread = useCallback(
+    (threadRef: ScopedThreadRef) => {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(threadRef),
+      });
+    },
+    [navigate],
+  );
+
+  const groupedChatThreads = useMemo(() => groupSidebarChatThreads(chatThreads), [chatThreads]);
+  const createChatThread = useCallback(
+    async (temporary: boolean) => {
+      if (!primaryEnvironmentId) {
+        toastManager.add({
+          type: "error",
+          title: "No environment available",
+        });
+        return;
+      }
+      const api = readEnvironmentApi(primaryEnvironmentId);
+      if (!api) {
+        toastManager.add({
+          type: "error",
+          title: "Environment API unavailable",
+        });
+        return;
+      }
+      const createdAt = new Date();
+      const threadId = newThreadId();
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "thread.create",
+          commandId: newCommandId(),
+          threadId,
+          kind: "chat",
+          projectId: null,
+          workspacePath: null,
+          title: temporary ? "Temporary chat" : "New chat",
+          modelSelection: createModelSelection("codex", DEFAULT_MODEL_BY_PROVIDER.codex),
+          runtimeMode: "auto-accept-edits",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          temporaryExpiresAt: temporary
+            ? new Date(createdAt.getTime() + TEMPORARY_CHAT_TTL_MS).toISOString()
+            : null,
+          createdAt: createdAt.toISOString(),
+        });
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(scopeThreadRef(primaryEnvironmentId, threadId)),
+        });
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not start chat",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [navigate, primaryEnvironmentId],
+  );
   const handleStartNewChat = useCallback(() => {
-    toastManager.add({
-      type: "info",
-      title: "New chats are coming soon",
+    void createChatThread(false);
+  }, [createChatThread]);
+  const handleStartTemporaryChat = useCallback(() => {
+    void createChatThread(true);
+  }, [createChatThread]);
+  const renameChatThread = useCallback(async (threadRef: ScopedThreadRef, title: string) => {
+    const api = readEnvironmentApi(threadRef.environmentId);
+    if (!api) return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.meta.update",
+      commandId: newCommandId(),
+      threadId: threadRef.threadId,
+      title,
     });
   }, []);
-  const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>("projects");
+  const pinChatThread = useCallback(async (threadRef: ScopedThreadRef) => {
+    const api = readEnvironmentApi(threadRef.environmentId);
+    if (!api) return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.pin",
+      commandId: newCommandId(),
+      threadId: threadRef.threadId,
+    });
+  }, []);
+  const unpinChatThread = useCallback(async (threadRef: ScopedThreadRef) => {
+    const api = readEnvironmentApi(threadRef.environmentId);
+    if (!api) return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.unpin",
+      commandId: newCommandId(),
+      threadId: threadRef.threadId,
+    });
+  }, []);
 
   return (
     <SidebarContent className="gap-0">
@@ -2933,23 +3354,72 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
                 Chats
               </span>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label="Start new chat"
-                      className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                      onClick={handleStartNewChat}
-                    />
-                  }
-                >
-                  <PlusIcon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipPopup side="right">Start new chat</TooltipPopup>
-              </Tooltip>
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label="Start new chat"
+                        className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                        onClick={handleStartNewChat}
+                      />
+                    }
+                  >
+                    <PlusIcon className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="right">Start new chat</TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label="Start temporary chat"
+                        className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                        onClick={handleStartTemporaryChat}
+                      />
+                    }
+                  >
+                    <ClockIcon className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="right">Temporary chat</TooltipPopup>
+                </Tooltip>
+              </div>
             </div>
-            <SidebarPlaceholderPanel label="Chats" />
+            {groupedChatThreads.length > 0 ? (
+              <div className="space-y-2">
+                {groupedChatThreads.map((group) => (
+                  <div key={group.id} className="space-y-1">
+                    <div className="px-2 pt-1 text-[9px] font-medium uppercase tracking-[0.16em] text-muted-foreground/45">
+                      {group.label}
+                    </div>
+                    <SidebarMenu>
+                      {group.threads.map((thread) => {
+                        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+                        const threadKey = scopedThreadKey(threadRef);
+                        return (
+                          <SidebarChatThreadRow
+                            key={threadKey}
+                            thread={thread}
+                            isActive={routeThreadKey === threadKey}
+                            onNavigate={navigateToThread}
+                            onRename={renameChatThread}
+                            onDelete={confirmAndDeleteThread}
+                            onPin={pinChatThread}
+                            onUnpin={unpinChatThread}
+                          />
+                        );
+                      })}
+                    </SidebarMenu>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
+                No chats yet
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="tickets">
@@ -2963,7 +3433,14 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
 export default function Sidebar() {
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
-  const sidebarThreads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const sidebarThreads = useStore(
+    useShallow((state) =>
+      selectSidebarThreadsAcrossEnvironments(state).filter(
+        (thread) => thread.kind === "project" && thread.projectId !== null,
+      ),
+    ),
+  );
+  const chatThreads = useStore(useShallow(selectSidebarChatThreadsAcrossEnvironments));
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
@@ -2979,7 +3456,7 @@ export default function Sidebar() {
   }));
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useNewThreadHandler();
-  const { archiveThread, deleteThread } = useThreadActions();
+  const { archiveThread, deleteThread, confirmAndDeleteThread } = useThreadActions();
   const routeThreadRef = useParams({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
@@ -3072,7 +3549,7 @@ export default function Sidebar() {
       return null;
     }
     const activeThread = sidebarThreadByKey.get(routeThreadKey);
-    if (!activeThread) return null;
+    if (!activeThread?.projectId) return null;
     const physicalKey =
       projectPhysicalKeyByScopedRef.get(
         scopedProjectKey(scopeProjectRef(activeThread.environmentId, activeThread.projectId)),
@@ -3085,6 +3562,9 @@ export default function Sidebar() {
   const threadsByProjectKey = useMemo(() => {
     const next = new Map<string, SidebarThreadSummary[]>();
     for (const thread of sidebarThreads) {
+      if (!thread.projectId) {
+        continue;
+      }
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -3218,6 +3698,9 @@ export default function Sidebar() {
       id: project.projectKey,
     }));
     const sortableThreads = visibleThreads.map((thread) => {
+      if (!thread.projectId) {
+        return thread;
+      }
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -3613,7 +4096,10 @@ export default function Sidebar() {
             handleNewThread={handleNewThread}
             archiveThread={archiveThread}
             deleteThread={deleteThread}
+            confirmAndDeleteThread={confirmAndDeleteThread}
             sortedProjects={sortedProjects}
+            chatThreads={chatThreads}
+            primaryEnvironmentId={primaryEnvironmentId}
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}
             routeThreadKey={routeThreadKey}

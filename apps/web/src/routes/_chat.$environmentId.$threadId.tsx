@@ -424,9 +424,9 @@ function ChatThreadRouteView() {
     threadRef ? store.getDraftThreadByRef(threadRef) : null,
   );
   const activeProject = useStore((store) => {
-    const projectRef = serverThread
+    const projectRef = serverThread?.projectId
       ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
-      : draftThread
+      : draftThread?.projectId
         ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
         : null;
     return projectRef ? selectProjectByRef(store, projectRef) : undefined;

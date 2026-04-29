@@ -256,6 +256,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           thread_id AS "threadId",
+          kind,
           project_id AS "projectId",
           title,
           model_selection_json AS "modelSelection",
@@ -263,10 +264,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          workspace_path AS "workspacePath",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
+          pinned_at AS "pinnedAt",
+          temporary_expires_at AS "temporaryExpiresAt",
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
@@ -510,6 +514,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           thread_id AS "threadId",
+          kind,
           project_id AS "projectId",
           title,
           model_selection_json AS "modelSelection",
@@ -517,10 +522,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          workspace_path AS "workspacePath",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
+          pinned_at AS "pinnedAt",
+          temporary_expires_at AS "temporaryExpiresAt",
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
@@ -1069,6 +1077,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     const checkpoints = checkpointsByThread.get(row.threadId) ?? [];
                     return {
                       id: row.threadId,
+                      kind: row.kind,
                       projectId: row.projectId,
                       title: row.title,
                       modelSelection: row.modelSelection,
@@ -1076,10 +1085,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       interactionMode: row.interactionMode,
                       branch: row.branch,
                       worktreePath: row.worktreePath,
+                      workspacePath: row.workspacePath,
                       latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                       createdAt: row.createdAt,
                       updatedAt: row.updatedAt,
                       archivedAt: row.archivedAt,
+                      pinnedAt: row.pinnedAt,
+                      temporaryExpiresAt: row.temporaryExpiresAt,
                       session: sessionByThread.get(row.threadId) ?? null,
                       latestUserMessageAt: row.latestUserMessageAt,
                       hasPendingApprovals: row.pendingApprovalCount > 0,
@@ -1276,6 +1288,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
       return Option.some({
         id: threadRow.value.threadId,
+        kind: threadRow.value.kind,
         projectId: threadRow.value.projectId,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,
@@ -1283,10 +1296,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        workspacePath: threadRow.value.workspacePath,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
+        pinnedAt: threadRow.value.pinnedAt,
+        temporaryExpiresAt: threadRow.value.temporaryExpiresAt,
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
@@ -1373,6 +1389,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
       const thread = {
         id: threadRow.value.threadId,
+        kind: threadRow.value.kind,
         projectId: threadRow.value.projectId,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,
@@ -1380,10 +1397,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        workspacePath: threadRow.value.workspacePath,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
+        pinnedAt: threadRow.value.pinnedAt,
+        temporaryExpiresAt: threadRow.value.temporaryExpiresAt,
         deletedAt: null,
         messages: messageRows.map((row) => {
           const message = {

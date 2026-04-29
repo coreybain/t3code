@@ -10,6 +10,7 @@ import {
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
+  ThreadKind,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -158,7 +159,8 @@ type LegacyPersistedComposerDraftStoreState = PersistedComposerDraftStoreState &
 const PersistedDraftThreadState = Schema.Struct({
   threadId: ThreadId,
   environmentId: Schema.String,
-  projectId: ProjectId,
+  kind: Schema.optional(ThreadKind),
+  projectId: Schema.NullOr(ProjectId),
   logicalProjectKey: Schema.optionalKey(Schema.String),
   createdAt: Schema.String,
   runtimeMode: RuntimeMode,
@@ -218,7 +220,8 @@ export interface ComposerThreadDraftState {
 export interface DraftSessionState {
   threadId: ThreadId;
   environmentId: EnvironmentId;
-  projectId: ProjectId;
+  kind?: ThreadKind;
+  projectId: ProjectId | null;
   logicalProjectKey: string;
   createdAt: string;
   runtimeMode: RuntimeMode;
@@ -1056,6 +1059,7 @@ function createDraftThreadState(
   return {
     threadId,
     environmentId: projectRef.environmentId,
+    kind: "project",
     projectId: projectRef.projectId,
     logicalProjectKey,
     createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
@@ -1220,6 +1224,7 @@ function normalizePersistedDraftThreads(
       draftThreadsByThreadKey[threadKey] = {
         threadId,
         environmentId: normalizedEnvironmentId,
+        kind: "project",
         projectId: projectId as ProjectId,
         logicalProjectKey:
           typeof candidateDraftThread.logicalProjectKey === "string" &&
@@ -1280,6 +1285,7 @@ function normalizePersistedDraftThreads(
         draftThreadsByThreadKey[threadKey] = {
           threadId: parsedThreadRef?.threadId ?? (threadKey as ThreadId),
           environmentId: projectRef.environmentId,
+          kind: "project",
           projectId: projectRef.projectId,
           logicalProjectKey,
           createdAt: new Date().toISOString(),
@@ -1782,15 +1788,18 @@ function toHydratedDraftThreadState(
   return {
     threadId: persistedDraftThread.threadId,
     environmentId: persistedDraftThread.environmentId as EnvironmentId,
+    ...(persistedDraftThread.kind ? { kind: persistedDraftThread.kind } : {}),
     projectId: persistedDraftThread.projectId,
     logicalProjectKey:
       persistedDraftThread.logicalProjectKey ??
-      projectDraftKey(
-        scopeProjectRef(
-          persistedDraftThread.environmentId as EnvironmentId,
-          persistedDraftThread.projectId,
-        ),
-      ),
+      (persistedDraftThread.projectId
+        ? projectDraftKey(
+            scopeProjectRef(
+              persistedDraftThread.environmentId as EnvironmentId,
+              persistedDraftThread.projectId,
+            ),
+          )
+        : `chat:${persistedDraftThread.environmentId}:${persistedDraftThread.threadId}`),
     createdAt: persistedDraftThread.createdAt,
     runtimeMode: persistedDraftThread.runtimeMode,
     interactionMode: persistedDraftThread.interactionMode,
@@ -1961,10 +1970,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               environmentId: existing.environmentId,
               projectId: existing.projectId,
             };
-            if (
-              nextProjectRef.projectId.length === 0 ||
-              nextProjectRef.environmentId.length === 0
-            ) {
+            if (!nextProjectRef.projectId || nextProjectRef.environmentId.length === 0) {
               return state;
             }
             const nextLogicalProjectKey =
@@ -1990,6 +1996,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   : existing.branch
                 : (options.branch ?? null);
             const nextDraftThread: DraftThreadState = {
+              kind: existing.kind ?? "project",
               threadId: existing.threadId,
               environmentId: nextProjectRef.environmentId,
               projectId: nextProjectRef.projectId,

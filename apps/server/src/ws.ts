@@ -66,6 +66,7 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import { ensureChatThreadWorkspace } from "./chat/chatThreadWorkspace.ts";
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -439,10 +440,23 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
+              const workspacePath =
+                bootstrap.createThread.kind === "chat"
+                  ? (bootstrap.createThread.workspacePath ??
+                    (yield* ensureChatThreadWorkspace({
+                      chatThreadsDir: config.chatThreadsDir,
+                      threadId: command.threadId,
+                    }).pipe(
+                      Effect.mapError((cause) =>
+                        toDispatchCommandError(cause, "Failed to create chat workspace"),
+                      ),
+                    )))
+                  : bootstrap.createThread.workspacePath;
               yield* orchestrationEngine.dispatch({
                 type: "thread.create",
                 commandId: serverCommandId("bootstrap-thread-create"),
                 threadId: command.threadId,
+                kind: bootstrap.createThread.kind,
                 projectId: bootstrap.createThread.projectId,
                 title: bootstrap.createThread.title,
                 modelSelection: bootstrap.createThread.modelSelection,
@@ -450,6 +464,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 interactionMode: bootstrap.createThread.interactionMode,
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
+                workspacePath,
+                temporaryExpiresAt: bootstrap.createThread.temporaryExpiresAt,
                 createdAt: bootstrap.createThread.createdAt,
               });
               createdThread = true;
@@ -492,16 +508,42 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const dispatchNormalizedCommand = (
         normalizedCommand: OrchestrationCommand,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
-        const dispatchEffect =
-          normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-            ? dispatchBootstrapTurnStart(normalizedCommand)
-            : orchestrationEngine
-                .dispatch(normalizedCommand)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+        const preparedCommand = Effect.gen(function* () {
+          if (normalizedCommand.type !== "thread.create" || normalizedCommand.kind !== "chat") {
+            return normalizedCommand;
+          }
+          const workspacePath =
+            normalizedCommand.workspacePath ??
+            (yield* ensureChatThreadWorkspace({
+              chatThreadsDir: config.chatThreadsDir,
+              threadId: normalizedCommand.threadId,
+            }).pipe(
+              Effect.mapError((cause) =>
+                toDispatchCommandError(cause, "Failed to create chat workspace"),
+              ),
+            ));
+          return {
+            ...normalizedCommand,
+            projectId: null,
+            workspacePath,
+          } satisfies OrchestrationCommand;
+        });
+        const dispatchEffect = preparedCommand.pipe(
+          Effect.flatMap((command) =>
+            command.type === "thread.turn.start" && command.bootstrap
+              ? dispatchBootstrapTurnStart(command)
+              : orchestrationEngine
+                  .dispatch(command)
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+                    ),
                   ),
-                );
+          ),
+          Effect.mapError((cause) =>
+            toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+          ),
+        );
 
         return startup
           .enqueueCommand(dispatchEffect)

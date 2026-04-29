@@ -9,6 +9,8 @@ import {
   ThreadDeletionReactor,
   type ThreadDeletionReactorShape,
 } from "../Services/ThreadDeletionReactor.ts";
+import { ServerConfig } from "../../config.ts";
+import { removeChatThreadWorkspace } from "../../chat/chatThreadWorkspace.ts";
 
 type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }>;
 
@@ -37,6 +39,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager;
+  const serverConfig = yield* ServerConfig;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -56,8 +59,17 @@ const make = Effect.gen(function* () {
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
+    const thread = (yield* orchestrationEngine.getReadModel()).threads.find(
+      (entry) => entry.id === threadId,
+    );
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
+    if (thread?.kind === "chat") {
+      yield* removeChatThreadWorkspace({
+        chatThreadsDir: serverConfig.chatThreadsDir,
+        workspacePath: thread.workspacePath ?? null,
+      });
+    }
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>

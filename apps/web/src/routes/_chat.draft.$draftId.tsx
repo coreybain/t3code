@@ -380,7 +380,7 @@ function DraftChatThreadRouteView() {
     ),
   );
   const activeProject = useStore((store) =>
-    draftSession
+    draftSession?.projectId
       ? selectProjectByRef(
           store,
           scopeProjectRef(draftSession.environmentId, draftSession.projectId),

@@ -293,9 +293,13 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+export const ThreadKind = Schema.Literals(["project", "chat"]);
+export type ThreadKind = typeof ThreadKind.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
-  projectId: ProjectId,
+  kind: Schema.optional(ThreadKind),
+  projectId: Schema.NullOr(ProjectId),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -304,10 +308,13 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  workspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  temporaryExpiresAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -341,7 +348,8 @@ export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
-  projectId: ProjectId,
+  kind: Schema.optional(ThreadKind),
+  projectId: Schema.NullOr(ProjectId),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -350,10 +358,13 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  workspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  temporaryExpiresAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -447,7 +458,8 @@ const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
   threadId: ThreadId,
-  projectId: ProjectId,
+  kind: Schema.optional(ThreadKind),
+  projectId: Schema.NullOr(ProjectId),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -456,6 +468,8 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  workspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  temporaryExpiresAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
 });
 
@@ -477,6 +491,18 @@ const ThreadUnarchiveCommand = Schema.Struct({
   threadId: ThreadId,
 });
 
+const ThreadPinCommand = Schema.Struct({
+  type: Schema.Literal("thread.pin"),
+  commandId: CommandId,
+  threadId: ThreadId,
+});
+
+const ThreadUnpinCommand = Schema.Struct({
+  type: Schema.Literal("thread.unpin"),
+  commandId: CommandId,
+  threadId: ThreadId,
+});
+
 const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
@@ -485,6 +511,8 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  workspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  temporaryExpiresAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -504,13 +532,16 @@ const ThreadInteractionModeSetCommand = Schema.Struct({
 });
 
 const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
-  projectId: ProjectId,
+  kind: Schema.optional(ThreadKind),
+  projectId: Schema.NullOr(ProjectId),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  workspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  temporaryExpiresAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
 });
 
@@ -617,6 +648,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
+  ThreadPinCommand,
+  ThreadUnpinCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
@@ -638,6 +671,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
+  ThreadPinCommand,
+  ThreadUnpinCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
@@ -740,6 +775,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.deleted",
   "thread.archived",
   "thread.unarchived",
+  "thread.pinned",
+  "thread.unpinned",
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
@@ -790,7 +827,8 @@ export const ProjectDeletedPayload = Schema.Struct({
 
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
-  projectId: ProjectId,
+  kind: Schema.optional(ThreadKind),
+  projectId: Schema.NullOr(ProjectId),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
@@ -799,6 +837,8 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  workspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  temporaryExpiresAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -819,12 +859,25 @@ export const ThreadUnarchivedPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const ThreadPinnedPayload = Schema.Struct({
+  threadId: ThreadId,
+  pinnedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadUnpinnedPayload = Schema.Struct({
+  threadId: ThreadId,
+  updatedAt: IsoDateTime,
+});
+
 export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  workspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  temporaryExpiresAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   updatedAt: IsoDateTime,
 });
 
@@ -985,6 +1038,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.unarchived"),
     payload: ThreadUnarchivedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.pinned"),
+    payload: ThreadPinnedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.unpinned"),
+    payload: ThreadUnpinnedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

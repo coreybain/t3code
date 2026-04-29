@@ -9,7 +9,13 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, FolderTreeIcon, PanelLeftOpenIcon, TerminalSquareIcon } from "lucide-react";
+import {
+  DiffIcon,
+  FolderTreeIcon,
+  InfoIcon,
+  PanelLeftOpenIcon,
+  TerminalSquareIcon,
+} from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -21,6 +27,7 @@ import { Button } from "../ui/button";
 import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
+  variant?: "project" | "chat";
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   draftId?: DraftId;
@@ -58,6 +65,7 @@ interface ChatHeaderProps {
 }
 
 export const ChatHeader = memo(function ChatHeader({
+  variant = "project",
   activeThreadEnvironmentId,
   activeThreadId,
   draftId,
@@ -89,8 +97,12 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleDiff,
   onDraftProjectChange,
 }: ChatHeaderProps) {
+  const isChatVariant = variant === "chat";
   const showDraftProjectPicker =
-    activeProjectKey !== null && draftProjectOptions.length > 1 && activeProjectName !== undefined;
+    !isChatVariant &&
+    activeProjectKey !== null &&
+    draftProjectOptions.length > 1 &&
+    activeProjectName !== undefined;
   const { open: leftPanelOpen, setOpen: setLeftPanelOpen } = useSidebar();
 
   return (
@@ -149,19 +161,36 @@ export const ChatHeader = memo(function ChatHeader({
               ))}
             </SelectPopup>
           </Select>
-        ) : activeProjectName ? (
+        ) : !isChatVariant && activeProjectName ? (
           <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
             <span className="min-w-0 truncate">{activeProjectName}</span>
           </Badge>
         ) : null}
-        {activeProjectName && !isGitRepo && (
+        {!isChatVariant && activeProjectName && !isGitRepo && (
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
             No Git
           </Badge>
         )}
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
-        {activeProjectScripts && (
+        {isChatVariant ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="outline"
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  aria-label="Chat info"
+                />
+              }
+            >
+              <InfoIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Chat info</TooltipPopup>
+          </Tooltip>
+        ) : activeProjectScripts ? (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             keybindings={keybindings}
@@ -171,92 +200,98 @@ export const ChatHeader = memo(function ChatHeader({
             onUpdateScript={onUpdateProjectScript}
             onDeleteScript={onDeleteProjectScript}
           />
-        )}
-        {activeProjectName && (
+        ) : null}
+        {!isChatVariant && activeProjectName && (
           <OpenInPicker
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && (
+        {!isChatVariant && activeProjectName && (
           <GitActionsControl
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
           />
         )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0"
-                pressed={terminalOpen}
-                onPressedChange={onToggleTerminal}
-                aria-label="Toggle terminal drawer"
-                variant="outline"
-                size="xs"
-                disabled={!terminalAvailable}
-              >
-                <TerminalSquareIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!terminalAvailable
-              ? "Terminal is unavailable until this thread has an active project."
-              : terminalToggleShortcutLabel
-                ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
-                : "Toggle terminal drawer"}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0"
-                pressed={fileTreeOpen}
-                onPressedChange={onToggleFileTree}
-                aria-label="Toggle file tree"
-                variant="outline"
-                size="xs"
-                disabled={!fileTreeAvailable}
-              >
-                <FolderTreeIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!fileTreeAvailable
-              ? "File tree is unavailable until this thread has an active project."
-              : "Toggle file tree"}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className={cn(
-                  "shrink-0",
-                  hasPlanInSidePanel &&
-                    "border-blue-500/40 text-blue-400 hover:text-blue-300 data-pressed:bg-blue-500/10",
-                )}
-                pressed={diffOpen}
-                onPressedChange={onToggleDiff}
-                aria-label="Toggle Side Panel"
-                variant="outline"
-                size="xs"
-              >
-                <DiffIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {diffToggleShortcutLabel
-              ? `Toggle Side Panel (${diffToggleShortcutLabel})`
-              : "Toggle Side Panel"}
-          </TooltipPopup>
-        </Tooltip>
+        {!isChatVariant && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={terminalOpen}
+                  onPressedChange={onToggleTerminal}
+                  aria-label="Toggle terminal drawer"
+                  variant="outline"
+                  size="xs"
+                  disabled={!terminalAvailable}
+                >
+                  <TerminalSquareIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {!terminalAvailable
+                ? "Terminal is unavailable until this thread has an active project."
+                : terminalToggleShortcutLabel
+                  ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
+                  : "Toggle terminal drawer"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
+        {!isChatVariant && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={fileTreeOpen}
+                  onPressedChange={onToggleFileTree}
+                  aria-label="Toggle file tree"
+                  variant="outline"
+                  size="xs"
+                  disabled={!fileTreeAvailable}
+                >
+                  <FolderTreeIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {!fileTreeAvailable
+                ? "File tree is unavailable until this thread has an active project."
+                : "Toggle file tree"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
+        {!isChatVariant && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className={cn(
+                    "shrink-0",
+                    hasPlanInSidePanel &&
+                      "border-blue-500/40 text-blue-400 hover:text-blue-300 data-pressed:bg-blue-500/10",
+                  )}
+                  pressed={diffOpen}
+                  onPressedChange={onToggleDiff}
+                  aria-label="Toggle Side Panel"
+                  variant="outline"
+                  size="xs"
+                >
+                  <DiffIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {diffToggleShortcutLabel
+                ? `Toggle Side Panel (${diffToggleShortcutLabel})`
+                : "Toggle Side Panel"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
       </div>
     </div>
   );

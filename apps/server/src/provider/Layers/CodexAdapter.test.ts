@@ -572,6 +572,45 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("ignores noisy Codex MCP auth stderr notifications", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-ignored-mcp-auth-stderr"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "process/stderr",
+        turnId: asTurnId("turn-1"),
+        message:
+          '2026-04-29T09:12:34.474243Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer" })',
+      } satisfies ProviderEvent);
+
+      yield* runtime.emit({
+        id: asEventId("evt-process-stderr-after-ignored"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "process/stderr",
+        turnId: asTurnId("turn-1"),
+        message: "The filename or extension is too long. (os error 206)",
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.eventId, "evt-process-stderr-after-ignored");
+      assert.equal(firstEvent.value.type, "runtime.warning");
+    }),
+  );
+
   it.effect("maps fatal websocket stderr notifications to runtime.error", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

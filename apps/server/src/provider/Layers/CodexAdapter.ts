@@ -132,10 +132,20 @@ function trimText(value: string | undefined | null): string | undefined {
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
+const IGNORED_CODEX_MCP_AUTH_STDERR_SNIPPETS = ["authrequired", "tokenrefreshfailed"];
 
 function isFatalCodexProcessStderrMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return FATAL_CODEX_STDERR_SNIPPETS.some((snippet) => normalized.includes(snippet));
+}
+
+function isIgnoredCodexProcessStderrMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("rmcp::transport::worker") &&
+    normalized.includes("transport channel closed") &&
+    IGNORED_CODEX_MCP_AUTH_STDERR_SNIPPETS.some((snippet) => normalized.includes(snippet))
+  );
 }
 
 function normalizeCodexTokenUsage(
@@ -1240,6 +1250,9 @@ function mapToRuntimeEvents(
 
   if (event.method === "process/stderr") {
     const message = event.message ?? "Codex process stderr";
+    if (isIgnoredCodexProcessStderrMessage(message)) {
+      return [];
+    }
     const isFatal = isFatalCodexProcessStderrMessage(message);
     return [
       isFatal
@@ -1368,6 +1381,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           cwd: input.cwd ?? process.cwd(),
+          ...(input.writableRoots ? { writableRoots: input.writableRoots } : {}),
           binaryPath: codexSettings.binaryPath,
           ...(codexSettings.homePath ? { homePath: codexSettings.homePath } : {}),
           ...(Schema.is(CodexResumeCursorSchema)(input.resumeCursor)

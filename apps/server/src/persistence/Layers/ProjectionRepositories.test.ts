@@ -74,6 +74,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
 
       yield* threads.upsert({
         threadId: ThreadId.make("thread-null-options"),
+        kind: "project",
         projectId: ProjectId.make("project-null-options"),
         title: "Null options thread",
         modelSelection: {
@@ -84,10 +85,13 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        workspacePath: null,
         latestTurnId: null,
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
         archivedAt: null,
+        pinnedAt: null,
+        temporaryExpiresAt: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,

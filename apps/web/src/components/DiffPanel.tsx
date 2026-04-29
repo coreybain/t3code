@@ -222,7 +222,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     routeDraftId ? store.getDraftSession(routeDraftId) : null,
   );
   const draftProject = useStore((store) =>
-    draftThread
+    draftThread?.projectId
       ? selectProjectByRef(store, {
           environmentId: draftThread.environmentId,
           projectId: draftThread.projectId,

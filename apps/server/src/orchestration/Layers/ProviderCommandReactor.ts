@@ -294,6 +294,8 @@ const make = Effect.gen(function* () {
       thread,
       projects: readModel.projects,
     });
+    const writableRoots =
+      thread.kind === "chat" && thread.workspacePath ? [thread.workspacePath] : undefined;
 
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
@@ -308,6 +310,7 @@ const make = Effect.gen(function* () {
         threadId,
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(writableRoots ? { writableRoots } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,

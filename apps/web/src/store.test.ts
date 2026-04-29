@@ -101,7 +101,7 @@ function makeState(thread: Thread): AppState {
     scripts: [],
   };
   const threadIdsByProjectId: EnvironmentState["threadIdsByProjectId"] = {
-    [thread.projectId]: [thread.id],
+    [thread.projectId!]: [thread.id],
   };
   const environmentState = {
     projectIds: [projectId],
@@ -654,7 +654,7 @@ describe("incremental orchestration updates", () => {
         ...baseEnvironmentState.sidebarThreadSummaryById,
       },
       threadIdsByProjectId: {
-        [thread1.projectId]: [thread1.id, thread2.id],
+        [thread1.projectId!]: [thread1.id, thread2.id],
       },
     });
 

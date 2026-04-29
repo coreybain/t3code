@@ -79,10 +79,14 @@ export function useThreadActions() {
         currentRouteThreadRef?.threadId === threadRef.threadId &&
         currentRouteThreadRef.environmentId === threadRef.environmentId
       ) {
-        await handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId));
+        if (thread.projectId) {
+          await handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId));
+        } else {
+          await router.navigate({ to: "/", replace: true });
+        }
       }
     },
-    [getCurrentRouteThreadRef, resolveThreadTarget],
+    [getCurrentRouteThreadRef, resolveThreadTarget, router],
   );
 
   const unarchiveThread = useCallback(async (target: ScopedThreadRef) => {
@@ -104,10 +108,12 @@ export function useThreadActions() {
       const { thread, threadRef } = resolved;
       const state = useStore.getState();
       const threads = selectThreadsForEnvironment(state, threadRef.environmentId);
-      const threadProject = selectProjectByRef(state, {
-        environmentId: threadRef.environmentId,
-        projectId: thread.projectId,
-      });
+      const threadProject = thread.projectId
+        ? selectProjectByRef(state, {
+            environmentId: threadRef.environmentId,
+            projectId: thread.projectId,
+          })
+        : undefined;
       const deletedIds =
         opts.deletedThreadKeys && opts.deletedThreadKeys.size > 0
           ? new Set<ThreadId>(
@@ -176,10 +182,12 @@ export function useThreadActions() {
         threadId: threadRef.threadId,
       });
       clearComposerDraftForThread(threadRef);
-      clearProjectDraftThreadById(
-        scopeProjectRef(threadRef.environmentId, thread.projectId),
-        threadRef,
-      );
+      if (thread.projectId) {
+        clearProjectDraftThreadById(
+          scopeProjectRef(threadRef.environmentId, thread.projectId),
+          threadRef,
+        );
+      }
       clearTerminalState(threadRef);
 
       if (shouldNavigateToFallback) {

@@ -200,11 +200,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.create": {
-      yield* requireProject({
-        readModel,
-        command,
-        projectId: command.projectId,
-      });
+      const kind = command.kind ?? "project";
+      const workspacePath = command.workspacePath ?? null;
+      const temporaryExpiresAt = command.temporaryExpiresAt ?? null;
+      if (kind === "project" && command.projectId !== null) {
+        yield* requireProject({
+          readModel,
+          command,
+          projectId: command.projectId,
+        });
+      } else if (kind === "project") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Project threads require a projectId.",
+        });
+      } else if (workspacePath === null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Chat threads require a workspacePath.",
+        });
+      }
       yield* requireThreadAbsent({
         readModel,
         command,
@@ -220,6 +235,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.created",
         payload: {
           threadId: command.threadId,
+          kind,
           projectId: command.projectId,
           title: command.title,
           modelSelection: command.modelSelection,
@@ -227,6 +243,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          workspacePath,
+          temporaryExpiresAt,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -300,6 +318,51 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.pin": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.pinned",
+        payload: {
+          threadId: command.threadId,
+          pinnedAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.unpin": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.unpinned",
+        payload: {
+          threadId: command.threadId,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.meta.update": {
       yield* requireThread({
         readModel,
@@ -323,6 +386,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.workspacePath !== undefined ? { workspacePath: command.workspacePath } : {}),
+          ...(command.temporaryExpiresAt !== undefined
+            ? { temporaryExpiresAt: command.temporaryExpiresAt }
+            : {}),
           updatedAt: occurredAt,
         },
       };
@@ -398,7 +465,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Proposed plan '${sourceProposedPlan.planId}' does not exist on thread '${sourceProposedPlan.threadId}'.`,
         });
       }
-      if (sourceThread && sourceThread.projectId !== targetThread.projectId) {
+      if (
+        sourceThread &&
+        (sourceThread.kind !== targetThread.kind ||
+          sourceThread.projectId !== targetThread.projectId)
+      ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Proposed plan '${sourceProposedPlan?.planId}' belongs to thread '${sourceThread.id}' in a different project.`,

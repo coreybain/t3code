@@ -229,6 +229,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     id: thread.id,
     environmentId,
     codexThreadId: null,
+    kind: thread.kind ?? "project",
     projectId: thread.projectId,
     title: thread.title,
     modelSelection: normalizeModelSelection(thread.modelSelection),
@@ -240,11 +241,14 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     error: sanitizeThreadErrorMessage(thread.session?.lastError),
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
+    pinnedAt: thread.pinnedAt ?? null,
+    temporaryExpiresAt: thread.temporaryExpiresAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    workspacePath: thread.workspacePath ?? null,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
   };
@@ -263,6 +267,7 @@ function mapThreadShell(
     id: thread.id,
     environmentId,
     codexThreadId: null,
+    kind: thread.kind ?? "project",
     projectId: thread.projectId,
     title: thread.title,
     modelSelection: normalizeModelSelection(thread.modelSelection),
@@ -271,9 +276,12 @@ function mapThreadShell(
     error: sanitizeThreadErrorMessage(thread.session?.lastError),
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
+    pinnedAt: thread.pinnedAt ?? null,
+    temporaryExpiresAt: thread.temporaryExpiresAt ?? null,
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    workspacePath: thread.workspacePath ?? null,
   };
   const session = thread.session ? mapSession(thread.session) : null;
   const turnState: ThreadTurnState = {
@@ -283,16 +291,20 @@ function mapThreadShell(
   const summary: SidebarThreadSummary = {
     id: thread.id,
     environmentId,
+    kind: thread.kind ?? "project",
     projectId: thread.projectId,
     title: thread.title,
     interactionMode: thread.interactionMode,
     session,
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
+    pinnedAt: thread.pinnedAt ?? null,
+    temporaryExpiresAt: thread.temporaryExpiresAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    workspacePath: thread.workspacePath ?? null,
     latestUserMessageAt: thread.latestUserMessageAt,
     hasPendingApprovals: thread.hasPendingApprovals,
     hasPendingUserInput: thread.hasPendingUserInput,
@@ -312,6 +324,7 @@ function toThreadShell(thread: Thread): ThreadShell {
     id: thread.id,
     environmentId: thread.environmentId,
     codexThreadId: thread.codexThreadId,
+    kind: thread.kind ?? "project",
     projectId: thread.projectId,
     title: thread.title,
     modelSelection: thread.modelSelection,
@@ -320,9 +333,12 @@ function toThreadShell(thread: Thread): ThreadShell {
     error: thread.error,
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
+    pinnedAt: thread.pinnedAt ?? null,
+    temporaryExpiresAt: thread.temporaryExpiresAt ?? null,
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    workspacePath: thread.workspacePath ?? null,
   };
 }
 
@@ -385,16 +401,20 @@ function sidebarThreadSummariesEqual(
   return (
     left !== undefined &&
     left.id === right.id &&
+    left.kind === right.kind &&
     left.projectId === right.projectId &&
     left.title === right.title &&
     left.interactionMode === right.interactionMode &&
     threadSessionsEqual(left.session, right.session) &&
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
+    left.pinnedAt === right.pinnedAt &&
+    left.temporaryExpiresAt === right.temporaryExpiresAt &&
     left.updatedAt === right.updatedAt &&
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
+    left.workspacePath === right.workspacePath &&
     left.latestUserMessageAt === right.latestUserMessageAt &&
     left.hasPendingApprovals === right.hasPendingApprovals &&
     left.hasPendingUserInput === right.hasPendingUserInput &&
@@ -409,6 +429,7 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.id === right.id &&
     left.environmentId === right.environmentId &&
     left.codexThreadId === right.codexThreadId &&
+    left.kind === right.kind &&
     left.projectId === right.projectId &&
     left.title === right.title &&
     left.modelSelection === right.modelSelection &&
@@ -417,9 +438,12 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.error === right.error &&
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
+    left.pinnedAt === right.pinnedAt &&
+    left.temporaryExpiresAt === right.temporaryExpiresAt &&
     left.updatedAt === right.updatedAt &&
     left.branch === right.branch &&
-    left.worktreePath === right.worktreePath
+    left.worktreePath === right.worktreePath &&
+    left.workspacePath === right.workspacePath
   );
 }
 
@@ -510,8 +534,8 @@ function getThreads(state: EnvironmentState): Thread[] {
 function ensureThreadRegistered(
   state: EnvironmentState,
   threadId: ThreadId,
-  nextProjectId: ProjectId,
-  previousProjectId: ProjectId | undefined,
+  nextProjectId: ProjectId | null,
+  previousProjectId: ProjectId | null | undefined,
 ): EnvironmentState {
   let nextState = state;
 
@@ -537,13 +561,15 @@ function ensureThreadRegistered(
         };
       }
     }
-    const projectThreadIds = threadIdsByProjectId[nextProjectId] ?? EMPTY_THREAD_IDS;
-    const nextProjectThreadIds = appendId(projectThreadIds, threadId);
-    if (!arraysEqual(projectThreadIds, nextProjectThreadIds)) {
-      threadIdsByProjectId = {
-        ...threadIdsByProjectId,
-        [nextProjectId]: nextProjectThreadIds,
-      };
+    if (nextProjectId) {
+      const projectThreadIds = threadIdsByProjectId[nextProjectId] ?? EMPTY_THREAD_IDS;
+      const nextProjectThreadIds = appendId(projectThreadIds, threadId);
+      if (!arraysEqual(projectThreadIds, nextProjectThreadIds)) {
+        threadIdsByProjectId = {
+          ...threadIdsByProjectId,
+          [nextProjectId]: nextProjectThreadIds,
+        };
+      }
     }
     if (threadIdsByProjectId !== nextState.threadIdsByProjectId) {
       nextState = {
@@ -775,18 +801,22 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
   }
 
   const nextThreadIds = removeId(state.threadIds, threadId);
-  const currentProjectThreadIds = state.threadIdsByProjectId[shell.projectId] ?? EMPTY_THREAD_IDS;
-  const nextProjectThreadIds = removeId(currentProjectThreadIds, threadId);
-  const nextThreadIdsByProjectId =
-    nextProjectThreadIds.length === 0
-      ? (() => {
-          const { [shell.projectId]: _removed, ...rest } = state.threadIdsByProjectId;
-          return rest as Record<ProjectId, ThreadId[]>;
-        })()
-      : {
-          ...state.threadIdsByProjectId,
-          [shell.projectId]: nextProjectThreadIds,
-        };
+  const nextThreadIdsByProjectId = shell.projectId
+    ? (() => {
+        const currentProjectThreadIds =
+          state.threadIdsByProjectId[shell.projectId] ?? EMPTY_THREAD_IDS;
+        const nextProjectThreadIds = removeId(currentProjectThreadIds, threadId);
+        return nextProjectThreadIds.length === 0
+          ? (() => {
+              const { [shell.projectId]: _removed, ...rest } = state.threadIdsByProjectId;
+              return rest as Record<ProjectId, ThreadId[]>;
+            })()
+          : {
+              ...state.threadIdsByProjectId,
+              [shell.projectId]: nextProjectThreadIds,
+            };
+      })()
+    : state.threadIdsByProjectId;
 
   const { [threadId]: _removedShell, ...threadShellById } = state.threadShellById;
   const { [threadId]: _removedSession, ...threadSessionById } = state.threadSessionById;
@@ -1248,7 +1278,9 @@ function applyEnvironmentOrchestrationEvent(
       const nextThread = mapThread(
         {
           id: event.payload.threadId,
+          kind: event.payload.kind ?? "project",
           projectId: event.payload.projectId,
+          workspacePath: event.payload.workspacePath ?? null,
           title: event.payload.title,
           modelSelection: event.payload.modelSelection,
           runtimeMode: event.payload.runtimeMode,
@@ -1258,6 +1290,8 @@ function applyEnvironmentOrchestrationEvent(
           latestTurn: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
+          pinnedAt: null,
+          temporaryExpiresAt: event.payload.temporaryExpiresAt ?? null,
           archivedAt: null,
           deletedAt: null,
           messages: [],
@@ -1299,6 +1333,26 @@ function applyEnvironmentOrchestrationEvent(
         ...(event.payload.worktreePath !== undefined
           ? { worktreePath: event.payload.worktreePath }
           : {}),
+        ...(event.payload.workspacePath !== undefined
+          ? { workspacePath: event.payload.workspacePath }
+          : {}),
+        ...(event.payload.temporaryExpiresAt !== undefined
+          ? { temporaryExpiresAt: event.payload.temporaryExpiresAt }
+          : {}),
+        updatedAt: event.payload.updatedAt,
+      }));
+
+    case "thread.pinned":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        pinnedAt: event.payload.pinnedAt,
+        updatedAt: event.payload.updatedAt,
+      }));
+
+    case "thread.unpinned":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        pinnedAt: null,
         updatedAt: event.payload.updatedAt,
       }));
 
@@ -1766,6 +1820,12 @@ export function selectSidebarThreadsAcrossEnvironments(state: AppState): Sidebar
       return thread && thread.environmentId === environmentId ? [thread] : [];
     }),
   );
+}
+
+export function selectSidebarChatThreadsAcrossEnvironments(
+  state: AppState,
+): SidebarThreadSummary[] {
+  return selectSidebarThreadsAcrossEnvironments(state).filter((thread) => thread.kind === "chat");
 }
 
 export function selectSidebarThreadsForProjectRef(

@@ -488,9 +488,9 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 }: PersistentThreadTerminalDrawerProps) {
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
-  const projectRef = serverThread
+  const projectRef = serverThread?.projectId
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
-    : draftThread
+    : draftThread?.projectId
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const project = useStore(useMemo(() => createProjectSelectorByRef(projectRef), [projectRef]));
@@ -893,7 +893,7 @@ export default function ChatView(props: ChatViewProps) {
     [mountedTerminalThreadKeys],
   );
 
-  const fallbackDraftProjectRef = draftThread
+  const fallbackDraftProjectRef = draftThread?.projectId
     ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
     : null;
   const fallbackDraftProject = useStore(
@@ -920,6 +920,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
+  const isChatThread = activeThread?.kind === "chat";
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
@@ -969,9 +970,9 @@ export default function ChatView(props: ChatViewProps) {
 
         const serverTerminalThread = terminalPanelServerThreadsByKey.get(nextThreadKey);
         const draftSession = draftSessionsByThreadKey.get(nextThreadKey);
-        const projectRef = serverTerminalThread
+        const projectRef = serverTerminalThread?.projectId
           ? scopeProjectRef(serverTerminalThread.environmentId, serverTerminalThread.projectId)
-          : draftSession
+          : draftSession?.draftThread.projectId
             ? scopeProjectRef(
                 draftSession.draftThread.environmentId,
                 draftSession.draftThread.projectId,
@@ -1034,7 +1035,7 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, [activeThreadKey, existingOpenTerminalThreadKeys, terminalState.terminalOpen]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
-  const activeProjectRef = activeThread
+  const activeProjectRef = activeThread?.projectId
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useStore(
@@ -3002,7 +3003,7 @@ export default function ChatView(props: ChatViewProps) {
       await onInterrupt();
       return;
     }
-    if (!activeProject) return;
+    if (!activeProject && !isChatThread) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
@@ -3136,7 +3137,7 @@ export default function ChatView(props: ChatViewProps) {
       const threadCreateModelSelection = createModelSelection(
         ctxSelectedProvider,
         ctxSelectedModel ||
-          activeProject.defaultModelSelection?.model ||
+          activeProject?.defaultModelSelection?.model ||
           DEFAULT_MODEL_BY_PROVIDER.codex,
         ctxSelectedModelSelection.options,
       );
@@ -3168,13 +3169,16 @@ export default function ChatView(props: ChatViewProps) {
               ...(isLocalDraftThread
                 ? {
                     createThread: {
-                      projectId: activeProject.id,
+                      kind: "project" as const,
+                      projectId: activeProject!.id,
+                      workspacePath: null,
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode: queuedMessage?.runtimeMode ?? runtimeMode,
                       interactionMode: queuedMessage?.interactionMode ?? interactionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
+                      temporaryExpiresAt: null,
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -3182,7 +3186,7 @@ export default function ChatView(props: ChatViewProps) {
               ...(baseBranchForWorktree
                 ? {
                     prepareWorktree: {
-                      projectCwd: activeProject.cwd,
+                      projectCwd: activeProject!.cwd,
                       baseBranch: baseBranchForWorktree,
                       branch: buildTemporaryWorktreeBranchName(),
                     },
@@ -3763,13 +3767,16 @@ export default function ChatView(props: ChatViewProps) {
         type: "thread.create",
         commandId: newCommandId(),
         threadId: nextThreadId,
+        kind: "project",
         projectId: activeProject.id,
+        workspacePath: null,
         title: nextThreadTitle,
         modelSelection: nextThreadModelSelection,
         runtimeMode,
         interactionMode: "default",
         branch: activeThreadBranch,
         worktreePath: activeThread.worktreePath,
+        temporaryExpiresAt: null,
         createdAt,
       })
       .then(() => {
@@ -3983,6 +3990,7 @@ export default function ChatView(props: ChatViewProps) {
         )}
       >
         <ChatHeader
+          variant={isChatThread ? "chat" : "project"}
           activeThreadEnvironmentId={activeThread.environmentId}
           activeThreadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
@@ -4113,6 +4121,7 @@ export default function ChatView(props: ChatViewProps) {
               planSidebarOpen={planSidebarOpen}
               runtimeMode={runtimeMode}
               interactionMode={interactionMode}
+              showInteractionModeControls={!isChatThread}
               lockedProvider={lockedProvider}
               providerStatuses={providerStatuses as ServerProvider[]}
               activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
@@ -4158,7 +4167,7 @@ export default function ChatView(props: ChatViewProps) {
             />
           </div>
 
-          {isGitRepo && (
+          {!isChatThread && isGitRepo && (
             <BranchToolbar
               environmentId={activeThread.environmentId}
               threadId={activeThread.id}

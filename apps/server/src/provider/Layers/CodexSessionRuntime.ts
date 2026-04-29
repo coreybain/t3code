@@ -79,6 +79,7 @@ export interface CodexSessionRuntimeOptions {
   readonly binaryPath: string;
   readonly homePath?: string;
   readonly cwd: string;
+  readonly writableRoots?: ReadonlyArray<string>;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
   readonly serviceTier?: EffectCodexSchema.V2ThreadStartParams__ServiceTier | undefined;
@@ -277,7 +278,15 @@ function buildThreadStartParams(input: {
 
 function runtimeModeToTurnSandboxPolicy(
   input: RuntimeMode,
+  writableRoots?: ReadonlyArray<string>,
 ): EffectCodexSchema.V2TurnStartParams__SandboxPolicy {
+  if (writableRoots && writableRoots.length > 0) {
+    return {
+      type: "workspaceWrite",
+      writableRoots,
+      readOnlyAccess: { type: "fullAccess" },
+    };
+  }
   switch (input) {
     case "approval-required":
       return {
@@ -320,6 +329,7 @@ function buildCodexCollaborationMode(input: {
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
+  readonly writableRoots?: ReadonlyArray<string>;
   readonly prompt?: string;
   readonly attachments?: ReadonlyArray<{ readonly type: "image"; readonly url: string }>;
   readonly model?: string;
@@ -352,7 +362,7 @@ export function buildTurnStartParams(input: {
     threadId: input.threadId,
     input: turnInput,
     approvalPolicy: config.approvalPolicy,
-    sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode),
+    sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode, input.writableRoots),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
@@ -1205,6 +1215,7 @@ export const makeCodexSessionRuntime = (
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
+            ...(options.writableRoots ? { writableRoots: options.writableRoots } : {}),
             ...(input.input ? { prompt: input.input } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),

@@ -15,6 +15,7 @@ import type {
   CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
+  ThreadKind,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -96,7 +97,8 @@ export interface Thread {
   id: ThreadId;
   environmentId: EnvironmentId;
   codexThreadId: string | null;
-  projectId: ProjectId;
+  kind?: ThreadKind;
+  projectId: ProjectId | null;
   title: string;
   modelSelection: ModelSelection;
   runtimeMode: RuntimeMode;
@@ -107,11 +109,14 @@ export interface Thread {
   error: string | null;
   createdAt: string;
   archivedAt: string | null;
+  pinnedAt?: string | null;
+  temporaryExpiresAt?: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   branch: string | null;
   worktreePath: string | null;
+  workspacePath?: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
 }
@@ -120,7 +125,8 @@ export interface ThreadShell {
   id: ThreadId;
   environmentId: EnvironmentId;
   codexThreadId: string | null;
-  projectId: ProjectId;
+  kind?: ThreadKind;
+  projectId: ProjectId | null;
   title: string;
   modelSelection: ModelSelection;
   runtimeMode: RuntimeMode;
@@ -128,9 +134,12 @@ export interface ThreadShell {
   error: string | null;
   createdAt: string;
   archivedAt: string | null;
+  pinnedAt?: string | null;
+  temporaryExpiresAt?: string | null;
   updatedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  workspacePath?: string | null;
 }
 
 export interface ThreadTurnState {
@@ -141,16 +150,20 @@ export interface ThreadTurnState {
 export interface SidebarThreadSummary {
   id: ThreadId;
   environmentId: EnvironmentId;
-  projectId: ProjectId;
+  kind?: ThreadKind;
+  projectId: ProjectId | null;
   title: string;
   interactionMode: ProviderInteractionMode;
   session: ThreadSession | null;
   createdAt: string;
   archivedAt: string | null;
+  pinnedAt?: string | null;
+  temporaryExpiresAt?: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
   branch: string | null;
   worktreePath: string | null;
+  workspacePath?: string | null;
   latestUserMessageAt: string | null;
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;

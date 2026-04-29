@@ -418,6 +418,7 @@ export interface ChatComposerProps {
   // Mode
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
+  showInteractionModeControls?: boolean;
 
   // Provider / model
   lockedProvider: ProviderKind | null;
@@ -524,6 +525,7 @@ export const ChatComposer = memo(
       planSidebarOpen,
       runtimeMode,
       interactionMode,
+      showInteractionModeControls = true,
       lockedProvider,
       providerStatuses,
       activeProjectDefaultModelSelection,
@@ -1977,7 +1979,10 @@ export const ChatComposer = memo(
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       runtimeMode={runtimeMode}
-                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                      showInteractionModeToggle={
+                        showInteractionModeControls &&
+                        composerProviderControls.showInteractionModeToggle
+                      }
                       traitsMenuContent={providerTraitsMenuContent}
                       onToggleInteractionMode={toggleInteractionMode}
                       onTogglePlanSidebar={togglePlanSidebar}
@@ -1996,6 +2001,7 @@ export const ChatComposer = memo(
                       ) : null}
                       <ComposerFooterModeControls
                         showInteractionModeToggle={
+                          showInteractionModeControls &&
                           composerProviderControls.showInteractionModeToggle
                         }
                         interactionMode={interactionMode}

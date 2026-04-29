@@ -42,7 +42,13 @@ import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  encodeSidePanelTabs,
+  parseDiffRouteSearch,
+  parseSidePanelTabs,
+  SIDE_PANEL_REVIEW_TAB_ID,
+  stripDiffSearchParams,
+} from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
@@ -187,6 +193,7 @@ import {
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { useSidebar } from "./ui/sidebar";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -333,6 +340,7 @@ type ChatViewProps =
       onTerminalLiveHeightChange?: ((height: number) => void) | undefined;
       reserveTitleBarControlInset?: boolean;
       mainContentRightInset?: string | undefined;
+      mainContentHidden?: boolean | undefined;
       routeKind: "server";
       draftId?: never;
     }
@@ -343,6 +351,7 @@ type ChatViewProps =
       onTerminalLiveHeightChange?: ((height: number) => void) | undefined;
       reserveTitleBarControlInset?: boolean;
       mainContentRightInset?: string | undefined;
+      mainContentHidden?: boolean | undefined;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -660,6 +669,7 @@ export default function ChatView(props: ChatViewProps) {
     routeKind,
     onDiffPanelOpen,
     onTerminalLiveHeightChange,
+    mainContentHidden = false,
     mainContentRightInset,
     reserveTitleBarControlInset = true,
   } = props;
@@ -694,6 +704,7 @@ export default function ChatView(props: ChatViewProps) {
     select: (params) => parseDiffRouteSearch(params),
   });
   const { resolvedTheme } = useTheme();
+  const { open: leftPanelOpen } = useSidebar();
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
@@ -909,7 +920,8 @@ export default function ChatView(props: ChatViewProps) {
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
+  const diffOpen =
+    rawSearch.sidePanel === "1" && rawSearch.sidePanelTab === SIDE_PANEL_REVIEW_TAB_ID;
   const fileTreeOpen = rawSearch.fileTree === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadRef = useMemo(
@@ -1683,7 +1695,14 @@ export default function ChatView(props: ChatViewProps) {
         replace: true,
         search: (previous) => {
           const rest = stripDiffSearchParams(previous);
-          return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
+          return diffOpen
+            ? { ...rest, sidePanel: undefined, sidePanelTab: undefined, sidePanelTabs: undefined }
+            : {
+                ...rest,
+                sidePanel: "1",
+                sidePanelTab: SIDE_PANEL_REVIEW_TAB_ID,
+                sidePanelTabs: encodeSidePanelTabs([SIDE_PANEL_REVIEW_TAB_ID]),
+              };
         },
       });
       return;
@@ -1701,7 +1720,14 @@ export default function ChatView(props: ChatViewProps) {
       replace: true,
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
-        return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
+        return diffOpen
+          ? { ...rest, sidePanel: undefined, sidePanelTab: undefined, sidePanelTabs: undefined }
+          : {
+              ...rest,
+              sidePanel: "1",
+              sidePanelTab: SIDE_PANEL_REVIEW_TAB_ID,
+              sidePanelTabs: encodeSidePanelTabs([SIDE_PANEL_REVIEW_TAB_ID]),
+            };
       },
     });
   }, [diffOpen, draftId, environmentId, navigate, onDiffPanelOpen, routeKind, threadId]);
@@ -3868,13 +3894,30 @@ export default function ChatView(props: ChatViewProps) {
         },
         search: (previous) => {
           const rest = stripDiffSearchParams(previous);
+          const tabs = parseSidePanelTabs(rawSearch.sidePanelTabs);
+          if (!tabs.includes(SIDE_PANEL_REVIEW_TAB_ID)) {
+            tabs.push(SIDE_PANEL_REVIEW_TAB_ID);
+          }
           return filePath
-            ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath }
-            : { ...rest, diff: "1", diffTurnId: turnId };
+            ? {
+                ...rest,
+                sidePanel: "1",
+                sidePanelTab: SIDE_PANEL_REVIEW_TAB_ID,
+                sidePanelTabs: encodeSidePanelTabs(tabs),
+                diffTurnId: turnId,
+                diffFilePath: filePath,
+              }
+            : {
+                ...rest,
+                sidePanel: "1",
+                sidePanelTab: SIDE_PANEL_REVIEW_TAB_ID,
+                sidePanelTabs: encodeSidePanelTabs(tabs),
+                diffTurnId: turnId,
+              };
         },
       });
     },
-    [environmentId, isServerThread, navigate, onDiffPanelOpen, threadId],
+    [environmentId, isServerThread, navigate, onDiffPanelOpen, rawSearch.sidePanelTabs, threadId],
   );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
@@ -3904,6 +3947,7 @@ export default function ChatView(props: ChatViewProps) {
           isElectron
             ? cn(
                 "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]",
+                !leftPanelOpen && "pl-[90px] wco:pl-[calc(env(titlebar-area-x)+1em)]",
                 reserveTitleBarControlInset &&
                   "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
               )
@@ -3953,7 +3997,11 @@ export default function ChatView(props: ChatViewProps) {
       />
       {/* Main content area with optional plan sidebar */}
       <div
-        className="flex min-h-0 min-w-0 flex-1 transition-[margin-right] duration-200 ease-linear"
+        className={cn(
+          "flex min-h-0 min-w-0 flex-1 transition-[margin-right] duration-200 ease-linear",
+          mainContentHidden && "pointer-events-none invisible",
+        )}
+        aria-hidden={mainContentHidden ? true : undefined}
         style={mainContentRightInset ? { marginRight: mainContentRightInset } : undefined}
       >
         {/* Chat column */}

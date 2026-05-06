@@ -1,6 +1,6 @@
 import type { EnvironmentId, Ticket, TicketPriority, TicketStatus } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ArchiveIcon, GitBranchIcon } from "lucide-react";
+import { ArchiveIcon, GitBranchIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -36,8 +36,9 @@ export function TicketDetailPanel(props: {
   projectName: string;
   onUpdate: (input: Partial<Pick<Ticket, "title" | "description" | "status" | "priority">>) => void;
   onArchive: (ticket: Ticket) => void;
+  onClose?: () => void;
 }) {
-  const { ticket, environmentId, projectName, onUpdate, onArchive } = props;
+  const { ticket, environmentId, projectName, onUpdate, onArchive, onClose } = props;
   const [draftTitle, setDraftTitle] = useState(ticket?.title ?? "");
   const [draftDescription, setDraftDescription] = useState(ticket?.description ?? "");
 
@@ -48,8 +49,25 @@ export function TicketDetailPanel(props: {
 
   if (!ticket) {
     return (
-      <aside className="flex min-h-0 flex-1 items-center justify-center bg-background px-6 text-sm text-muted-foreground">
-        No ticket selected
+      <aside className="flex min-h-0 flex-1 flex-col bg-background">
+        {onClose ? (
+          <div className="flex h-12 shrink-0 items-center justify-between border-border border-b px-4">
+            <div className="text-sm font-medium text-foreground">Details</div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={onClose}
+              aria-label="Close ticket details"
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          </div>
+        ) : null}
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-sm text-muted-foreground">
+          No ticket selected
+        </div>
       </aside>
     );
   }
@@ -58,16 +76,30 @@ export function TicketDetailPanel(props: {
     <aside className="flex min-h-0 flex-1 flex-col bg-background">
       <div className="flex h-12 shrink-0 items-center justify-between border-border border-b px-4">
         <div className="min-w-0 text-sm text-muted-foreground">{projectName}</div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1.5 px-2"
-          onClick={() => onArchive(ticket)}
-        >
-          <ArchiveIcon className="size-3.5" />
-          Archive
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 px-2"
+            onClick={() => onArchive(ticket)}
+          >
+            <ArchiveIcon className="size-3.5" />
+            Archive
+          </Button>
+          {onClose ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={onClose}
+              aria-label="Close ticket details"
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          ) : null}
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <Input

@@ -428,11 +428,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         },
       ]);
 
+      const expectedDetailThread = snapshot.threads[0];
+      assert.ok(expectedDetailThread);
+
       const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value, {
-          ...snapshot.threads[0],
+          ...expectedDetailThread,
           kind: "project",
           workspacePath: null,
           pinnedAt: null,

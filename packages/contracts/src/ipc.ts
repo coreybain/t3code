@@ -32,6 +32,24 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type {
+  TicketArchiveInput,
+  TicketArchiveResult,
+  TicketCreateInput,
+  TicketCreateResult,
+  TicketMilestoneArchiveInput,
+  TicketMilestoneArchiveResult,
+  TicketMilestoneCreateInput,
+  TicketMilestoneCreateResult,
+  TicketMilestonesListInput,
+  TicketMilestonesListResult,
+  TicketMilestoneUpdateInput,
+  TicketMilestoneUpdateResult,
+  TicketsListInput,
+  TicketsListResult,
+  TicketUpdateInput,
+  TicketUpdateResult,
+} from "./tickets.ts";
+import type {
   ServerConfig,
   ServerProviderUpdatedPayload,
   ServerUpsertKeybindingResult,
@@ -297,6 +315,18 @@ export interface EnvironmentApi {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+  };
+  tickets: {
+    list: (input: TicketsListInput) => Promise<TicketsListResult>;
+    create: (input: TicketCreateInput) => Promise<TicketCreateResult>;
+    update: (input: TicketUpdateInput) => Promise<TicketUpdateResult>;
+    archive: (input: TicketArchiveInput) => Promise<TicketArchiveResult>;
+  };
+  ticketMilestones: {
+    list: (input: TicketMilestonesListInput) => Promise<TicketMilestonesListResult>;
+    create: (input: TicketMilestoneCreateInput) => Promise<TicketMilestoneCreateResult>;
+    update: (input: TicketMilestoneUpdateInput) => Promise<TicketMilestoneUpdateResult>;
+    archive: (input: TicketMilestoneArchiveInput) => Promise<TicketMilestoneArchiveResult>;
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;

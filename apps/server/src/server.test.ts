@@ -75,6 +75,8 @@ import {
   type ProjectionSnapshotQueryShape,
 } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import { TicketMilestoneRepositoryLive } from "./persistence/Layers/TicketMilestones.ts";
+import { TicketRepositoryLive } from "./persistence/Layers/Tickets.ts";
 import {
   ProviderRegistry,
   type ProviderRegistryShape,
@@ -192,16 +194,6 @@ const makeDefaultOrchestrationThreadShell = (
     ...overrides,
   };
 };
-
-const workspaceAndProjectServicesLayer = Layer.mergeAll(
-  WorkspacePathsLive,
-  WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive)),
-  WorkspaceFileSystemLive.pipe(
-    Layer.provide(WorkspacePathsLive),
-    Layer.provide(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
-  ),
-  ProjectFaviconResolverLive,
-);
 
 const browserOtlpTracingLayer = Layer.mergeAll(
   FetchHttpClient.layer,
@@ -540,6 +532,10 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provideMerge(authTestLayer),
+      Layer.provideMerge(TicketRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory))),
+      Layer.provideMerge(
+        TicketMilestoneRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+      ),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),

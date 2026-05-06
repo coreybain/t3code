@@ -22,6 +22,18 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       readFile: rpcClient.projects.readFile,
       writeFile: rpcClient.projects.writeFile,
     },
+    tickets: {
+      list: rpcClient.tickets.list,
+      create: rpcClient.tickets.create,
+      update: rpcClient.tickets.update,
+      archive: rpcClient.tickets.archive,
+    },
+    ticketMilestones: {
+      list: rpcClient.ticketMilestones.list,
+      create: rpcClient.ticketMilestones.create,
+      update: rpcClient.ticketMilestones.update,
+      archive: rpcClient.ticketMilestones.archive,
+    },
     filesystem: {
       browse: rpcClient.filesystem.browse,
     },

@@ -65,6 +65,26 @@ import {
   ProjectWriteFileResult,
 } from "./project.ts";
 import {
+  TicketArchiveInput,
+  TicketArchiveResult,
+  TicketCreateInput,
+  TicketCreateResult,
+  TicketMilestoneArchiveInput,
+  TicketMilestoneArchiveResult,
+  TicketMilestoneCreateInput,
+  TicketMilestoneCreateResult,
+  TicketMilestoneRpcError,
+  TicketMilestonesListInput,
+  TicketMilestonesListResult,
+  TicketMilestoneUpdateInput,
+  TicketMilestoneUpdateResult,
+  TicketRpcError,
+  TicketsListInput,
+  TicketsListResult,
+  TicketUpdateInput,
+  TicketUpdateResult,
+} from "./tickets.ts";
+import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalError,
@@ -95,6 +115,16 @@ export const WS_METHODS = {
   projectsSearchEntries: "projects.searchEntries",
   projectsReadFile: "projects.readFile",
   projectsWriteFile: "projects.writeFile",
+
+  // Ticket methods
+  ticketsList: "tickets.list",
+  ticketsCreate: "tickets.create",
+  ticketsUpdate: "tickets.update",
+  ticketsArchive: "tickets.archive",
+  ticketMilestonesList: "ticketMilestones.list",
+  ticketMilestonesCreate: "ticketMilestones.create",
+  ticketMilestonesUpdate: "ticketMilestones.update",
+  ticketMilestonesArchive: "ticketMilestones.archive",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -197,6 +227,54 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
   error: ProjectWriteFileError,
+});
+
+export const WsTicketsListRpc = Rpc.make(WS_METHODS.ticketsList, {
+  payload: TicketsListInput,
+  success: TicketsListResult,
+  error: TicketRpcError,
+});
+
+export const WsTicketsCreateRpc = Rpc.make(WS_METHODS.ticketsCreate, {
+  payload: TicketCreateInput,
+  success: TicketCreateResult,
+  error: TicketRpcError,
+});
+
+export const WsTicketsUpdateRpc = Rpc.make(WS_METHODS.ticketsUpdate, {
+  payload: TicketUpdateInput,
+  success: TicketUpdateResult,
+  error: TicketRpcError,
+});
+
+export const WsTicketsArchiveRpc = Rpc.make(WS_METHODS.ticketsArchive, {
+  payload: TicketArchiveInput,
+  success: TicketArchiveResult,
+  error: TicketRpcError,
+});
+
+export const WsTicketMilestonesListRpc = Rpc.make(WS_METHODS.ticketMilestonesList, {
+  payload: TicketMilestonesListInput,
+  success: TicketMilestonesListResult,
+  error: TicketMilestoneRpcError,
+});
+
+export const WsTicketMilestonesCreateRpc = Rpc.make(WS_METHODS.ticketMilestonesCreate, {
+  payload: TicketMilestoneCreateInput,
+  success: TicketMilestoneCreateResult,
+  error: TicketMilestoneRpcError,
+});
+
+export const WsTicketMilestonesUpdateRpc = Rpc.make(WS_METHODS.ticketMilestonesUpdate, {
+  payload: TicketMilestoneUpdateInput,
+  success: TicketMilestoneUpdateResult,
+  error: TicketMilestoneRpcError,
+});
+
+export const WsTicketMilestonesArchiveRpc = Rpc.make(WS_METHODS.ticketMilestonesArchive, {
+  payload: TicketMilestoneArchiveInput,
+  success: TicketMilestoneArchiveResult,
+  error: TicketMilestoneRpcError,
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -403,6 +481,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsWriteFileRpc,
+  WsTicketsListRpc,
+  WsTicketsCreateRpc,
+  WsTicketsUpdateRpc,
+  WsTicketsArchiveRpc,
+  WsTicketMilestonesListRpc,
+  WsTicketMilestonesCreateRpc,
+  WsTicketMilestonesUpdateRpc,
+  WsTicketMilestonesArchiveRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsSubscribeGitStatusRpc,

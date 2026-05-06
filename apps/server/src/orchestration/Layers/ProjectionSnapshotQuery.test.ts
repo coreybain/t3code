@@ -382,6 +382,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.deepEqual(shellSnapshot.threads, [
         {
           id: ThreadId.make("thread-1"),
+          kind: "project",
           projectId: asProjectId("project-1"),
           title: "Thread 1",
           modelSelection: {
@@ -391,7 +392,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           interactionMode: "default",
           runtimeMode: "full-access",
           branch: null,
+          workspacePath: null,
           worktreePath: null,
+          temporaryExpiresAt: null,
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -407,6 +410,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
+          pinnedAt: null,
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
@@ -420,13 +424,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          hasCheckpointedFileChanges: true,
         },
       ]);
 
       const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
-        assert.deepEqual(threadDetail.value, snapshot.threads[0]);
+        assert.deepEqual(threadDetail.value, {
+          ...snapshot.threads[0],
+          kind: "project",
+          workspacePath: null,
+          pinnedAt: null,
+          temporaryExpiresAt: null,
+        });
       }
     }),
   );

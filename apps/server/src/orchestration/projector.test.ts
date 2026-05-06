@@ -74,6 +74,7 @@ describe("orchestration projector", () => {
     expect(next.threads).toEqual([
       {
         id: "thread-1",
+        kind: undefined,
         projectId: "project-1",
         title: "demo",
         modelSelection: {
@@ -83,11 +84,14 @@ describe("orchestration projector", () => {
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
+        workspacePath: undefined,
         worktreePath: null,
+        temporaryExpiresAt: undefined,
         latestTurn: null,
         createdAt: now,
         updatedAt: now,
         archivedAt: null,
+        pinnedAt: null,
         deletedAt: null,
         messages: [],
         proposedPlans: [],

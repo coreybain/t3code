@@ -24,6 +24,18 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const BROWSER_PANEL_CREATE_CHANNEL = "desktop:browser-panel:create";
+const BROWSER_PANEL_ATTACH_CHANNEL = "desktop:browser-panel:attach";
+const BROWSER_PANEL_DETACH_CHANNEL = "desktop:browser-panel:detach";
+const BROWSER_PANEL_DESTROY_CHANNEL = "desktop:browser-panel:destroy";
+const BROWSER_PANEL_NAVIGATE_CHANNEL = "desktop:browser-panel:navigate";
+const BROWSER_PANEL_RELOAD_CHANNEL = "desktop:browser-panel:reload";
+const BROWSER_PANEL_GO_BACK_CHANNEL = "desktop:browser-panel:go-back";
+const BROWSER_PANEL_GO_FORWARD_CHANNEL = "desktop:browser-panel:go-forward";
+const BROWSER_PANEL_OPEN_DEVTOOLS_CHANNEL = "desktop:browser-panel:open-devtools";
+const BROWSER_PANEL_CLOSE_DEVTOOLS_CHANNEL = "desktop:browser-panel:close-devtools";
+const BROWSER_PANEL_GET_STATE_CHANNEL = "desktop:browser-panel:get-state";
+const BROWSER_PANEL_STATE_CHANNEL = "desktop:browser-panel:state";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
@@ -84,5 +96,34 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => {
       ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener);
     };
+  },
+  browserPanel: {
+    create: (input) => ipcRenderer.invoke(BROWSER_PANEL_CREATE_CHANNEL, input),
+    attach: (input) => ipcRenderer.invoke(BROWSER_PANEL_ATTACH_CHANNEL, input),
+    detach: (input) => ipcRenderer.invoke(BROWSER_PANEL_DETACH_CHANNEL, input),
+    destroy: (input) => ipcRenderer.invoke(BROWSER_PANEL_DESTROY_CHANNEL, input),
+    navigate: (input) => ipcRenderer.invoke(BROWSER_PANEL_NAVIGATE_CHANNEL, input),
+    reload: (input) => ipcRenderer.invoke(BROWSER_PANEL_RELOAD_CHANNEL, input),
+    goBack: (input) => ipcRenderer.invoke(BROWSER_PANEL_GO_BACK_CHANNEL, input),
+    goForward: (input) => ipcRenderer.invoke(BROWSER_PANEL_GO_FORWARD_CHANNEL, input),
+    openDevTools: (input) => ipcRenderer.invoke(BROWSER_PANEL_OPEN_DEVTOOLS_CHANNEL, input),
+    closeDevTools: (input) => ipcRenderer.invoke(BROWSER_PANEL_CLOSE_DEVTOOLS_CHANNEL, input),
+    getState: (input) => ipcRenderer.invoke(BROWSER_PANEL_GET_STATE_CHANNEL, input),
+    onState: (input, listener) => {
+      const wrappedListener = (
+        _event: Electron.IpcRendererEvent,
+        panelId: unknown,
+        state: unknown,
+      ) => {
+        if (typeof panelId !== "string" || panelId !== input.panelId) return;
+        if (typeof state !== "object" || state === null) return;
+        listener(state as Parameters<typeof listener>[0]);
+      };
+
+      ipcRenderer.on(BROWSER_PANEL_STATE_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(BROWSER_PANEL_STATE_CHANNEL, wrappedListener);
+      };
+    },
   },
 } satisfies DesktopBridge);

@@ -5,6 +5,7 @@ import {
   CloudIcon,
   ClockIcon,
   GitPullRequestIcon,
+  MoreHorizontalIcon,
   PinIcon,
   PinOffIcon,
   PlusIcon,
@@ -24,6 +25,7 @@ import {
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
+import { useQueryClient } from "@tanstack/react-query";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -67,7 +69,7 @@ import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isMacPlatform, newCommandId, newThreadId } from "../lib/utils";
+import { cn, isMacPlatform, newCommandId, newThreadId } from "../lib/utils";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
   selectProjectByRef,
@@ -173,7 +175,10 @@ import {
   ThreadStatusPill,
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
+import { createTicket } from "../lib/ticketReactQuery";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
+import { TicketSidebarNav } from "./tickets/TicketSidebarNav";
+import { encodeTicketScope } from "./tickets/ticketNavigation";
 import { SidebarUsageMonitor } from "./usage/UsageLimitViews";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { CommandDialogTrigger } from "./ui/command";
@@ -1047,6 +1052,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
   }));
   const { updateSettings } = useUpdateSettings();
+  const queryClient = useQueryClient();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const router = useRouter();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const toggleProject = useUiStateStore((state) => state.toggleProject);
@@ -1813,10 +1820,42 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           label: "Create ticket",
         };
         actionHandlers.set(createTicketItem.id, () => {
-          toastManager.add({
-            type: "info",
-            title: "Ticket creation is coming soon",
-          });
+          const targetMember =
+            project.memberProjects.find(
+              (member) => member.environmentId === primaryEnvironmentId,
+            ) ?? project.memberProjects[0];
+          if (!targetMember) {
+            toastManager.add({
+              type: "error",
+              title: "No project available",
+            });
+            return;
+          }
+          void createTicket({
+            environmentId: targetMember.environmentId,
+            payload: {
+              title: "Untitled ticket",
+              projectId: targetMember.id,
+              status: "triage",
+            },
+            queryClient,
+          })
+            .then((ticket) =>
+              router.navigate({
+                to: "/tickets/$scope/$view",
+                params: { scope: encodeTicketScope(project.projectKey), view: "triage" },
+                search: { ticketId: ticket.id },
+              }),
+            )
+            .catch((error) => {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to create ticket",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            });
         });
 
         const renameItem = {
@@ -1854,8 +1893,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       handleRemoveProject,
       openProjectGroupingDialog,
       openProjectRenameDialog,
+      primaryEnvironmentId,
       project.groupedProjectCount,
+      project.projectKey,
       project.memberProjects,
+      queryClient,
+      router,
       setSidebarPanel,
       startNewJob,
       suppressProjectClickForContextMenuRef,
@@ -1927,11 +1970,38 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   }, [setSidebarPanel]);
   const handleCreateTicketMenuSelect = useCallback(() => {
     setNewThreadMenuOpen(false);
-    toastManager.add({
-      type: "info",
-      title: "Ticket creation is coming soon",
-    });
-  }, []);
+    const targetMember =
+      project.memberProjects.find((member) => member.environmentId === primaryEnvironmentId) ??
+      project.memberProjects[0];
+    if (!targetMember) {
+      return;
+    }
+    void createTicket({
+      environmentId: targetMember.environmentId,
+      payload: {
+        title: "Untitled ticket",
+        projectId: targetMember.id,
+        status: "triage",
+      },
+      queryClient,
+    })
+      .then((ticket) =>
+        router.navigate({
+          to: "/tickets/$scope/$view",
+          params: { scope: encodeTicketScope(project.projectKey), view: "triage" },
+          search: { ticketId: ticket.id },
+        }),
+      )
+      .catch((error) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to create ticket",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      });
+  }, [primaryEnvironmentId, project.memberProjects, project.projectKey, queryClient, router]);
 
   useEffect(() => clearNewThreadLongPressTimer, [clearNewThreadLongPressTimer]);
 
@@ -2129,10 +2199,33 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       if (clicked === "create-ticket-from") {
-        toastManager.add({
-          type: "info",
-          title: "Ticket creation is coming soon",
-        });
+        void createTicket({
+          environmentId: thread.environmentId,
+          payload: {
+            title: thread.title,
+            description: "",
+            projectId: thread.projectId,
+            sourceThreadId: thread.id,
+            status: "triage",
+          },
+          queryClient,
+        })
+          .then((ticket) =>
+            router.navigate({
+              to: "/tickets/$scope/$view",
+              params: { scope: encodeTicketScope(project.projectKey), view: "triage" },
+              search: { ticketId: ticket.id },
+            }),
+          )
+          .catch((error) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to create ticket",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          });
         return;
       }
 
@@ -2187,6 +2280,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       markThreadUnread,
       memberProjectByScopedKey,
       project.cwd,
+      project.projectKey,
+      queryClient,
+      router,
       setSidebarPanel,
     ],
   );
@@ -2750,14 +2846,6 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   );
 });
 
-function SidebarPlaceholderPanel({ label }: { label: string }) {
-  return (
-    <div className="rounded-lg border border-dashed border-border/70 px-3 py-6 text-center text-xs text-muted-foreground/70">
-      {label} coming soon
-    </div>
-  );
-}
-
 function formatTemporaryChatExpiry(expiresAt: string): string {
   const expiresMs = Date.parse(expiresAt);
   if (!Number.isFinite(expiresMs)) {
@@ -2777,6 +2865,7 @@ const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
   onNavigate,
   onRename,
   onDelete,
+  onArchive,
   onPin,
   onUnpin,
 }: {
@@ -2785,16 +2874,36 @@ const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
   onNavigate: (threadRef: ScopedThreadRef) => void;
   onRename: (threadRef: ScopedThreadRef, title: string) => Promise<void>;
   onDelete: (threadRef: ScopedThreadRef) => Promise<void>;
+  onArchive: (threadRef: ScopedThreadRef) => Promise<void>;
   onPin: (threadRef: ScopedThreadRef) => Promise<void>;
   onUnpin: (threadRef: ScopedThreadRef) => Promise<void>;
 }) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const [renaming, setRenaming] = useState(false);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [title, setTitle] = useState(thread.title);
+  const [deleteConfirmUntil, setDeleteConfirmUntil] = useState<number | null>(null);
+  const [deleteConfirmNow, setDeleteConfirmNow] = useState(() => Date.now());
   const inputRef = useRef<HTMLInputElement | null>(null);
   const temporaryLabel = thread.temporaryExpiresAt
     ? formatTemporaryChatExpiry(thread.temporaryExpiresAt)
     : null;
+  const isDeleteConfirming = deleteConfirmUntil !== null && deleteConfirmUntil > deleteConfirmNow;
+  const deleteConfirmSeconds = isDeleteConfirming
+    ? Math.max(1, Math.ceil((deleteConfirmUntil - deleteConfirmNow) / 1_000))
+    : 0;
+
+  useEffect(() => {
+    if (deleteConfirmUntil === null) return;
+    const intervalId = window.setInterval(() => {
+      const now = Date.now();
+      setDeleteConfirmNow(now);
+      if (now >= deleteConfirmUntil) {
+        setDeleteConfirmUntil(null);
+      }
+    }, 250);
+    return () => window.clearInterval(intervalId);
+  }, [deleteConfirmUntil]);
 
   useEffect(() => {
     if (!renaming) {
@@ -2820,10 +2929,13 @@ const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
   }, [onRename, thread.title, threadRef, title]);
 
   const handleClick = useCallback(() => {
+    if (actionsMenuOpen) {
+      return;
+    }
     if (!renaming) {
       onNavigate(threadRef);
     }
-  }, [onNavigate, renaming, threadRef]);
+  }, [actionsMenuOpen, onNavigate, renaming, threadRef]);
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -2850,6 +2962,22 @@ const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
     [commitRename, thread.title],
   );
 
+  const handleDeleteMenuClick = useCallback(
+    async (event?: Pick<Event, "preventDefault" | "stopPropagation">) => {
+      event?.stopPropagation();
+      if (!isDeleteConfirming) {
+        event?.preventDefault();
+        const now = Date.now();
+        setDeleteConfirmNow(now);
+        setDeleteConfirmUntil(now + 4_000);
+        return;
+      }
+      setDeleteConfirmUntil(null);
+      await onDelete(threadRef);
+    },
+    [isDeleteConfirming, onDelete, threadRef],
+  );
+
   const handleContextMenu = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault();
@@ -2862,6 +2990,7 @@ const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
               id: thread.pinnedAt ? "unpin" : "pin",
               label: thread.pinnedAt ? "Unpin chat" : "Pin chat",
             },
+            { id: "archive", label: "Archive chat" },
             { id: "rename", label: "Rename chat" },
             { id: "delete", label: "Delete", destructive: true },
           ],
@@ -2871,14 +3000,16 @@ const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
           await onPin(threadRef);
         } else if (clicked === "unpin") {
           await onUnpin(threadRef);
+        } else if (clicked === "archive") {
+          await onArchive(threadRef);
         } else if (clicked === "rename") {
           setRenaming(true);
         } else if (clicked === "delete") {
-          await onDelete(threadRef);
+          await handleDeleteMenuClick();
         }
       })();
     },
-    [onDelete, onPin, onUnpin, thread.pinnedAt, threadRef],
+    [handleDeleteMenuClick, onArchive, onPin, onUnpin, thread.pinnedAt, threadRef],
   );
 
   return (
@@ -2927,44 +3058,73 @@ const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
             thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
           )}
         </span>
-        <span className="hidden shrink-0 items-center gap-0.5 group-hover/chat-row:flex">
-          <button
-            type="button"
-            aria-label={thread.pinnedAt ? "Unpin chat" : "Pin chat"}
-            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
-            onClick={(event) => {
-              event.preventDefault();
+        <Menu open={actionsMenuOpen} onOpenChange={setActionsMenuOpen}>
+          <MenuTrigger
+            className={cn(
+              "size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground",
+              actionsMenuOpen
+                ? "inline-flex bg-secondary text-foreground"
+                : "hidden group-hover/chat-row:inline-flex",
+            )}
+            aria-label="Chat actions"
+            onPointerDown={(event) => {
               event.stopPropagation();
-              void (thread.pinnedAt ? onUnpin(threadRef) : onPin(threadRef));
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
             }}
           >
-            {thread.pinnedAt ? <PinOffIcon className="size-3" /> : <PinIcon className="size-3" />}
-          </button>
-          <button
-            type="button"
-            aria-label="Rename chat"
-            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              setRenaming(true);
-            }}
+            <MoreHorizontalIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup
+            align="end"
+            side="right"
+            sideOffset={6}
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
           >
-            <SquarePenIcon className="size-3" />
-          </button>
-          <button
-            type="button"
-            aria-label="Delete chat"
-            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-destructive/10 hover:text-destructive"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              void onDelete(threadRef);
-            }}
-          >
-            <TrashIcon className="size-3" />
-          </button>
-        </span>
+            <MenuGroup>
+              <MenuItem
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void (thread.pinnedAt ? onUnpin(threadRef) : onPin(threadRef));
+                }}
+              >
+                {thread.pinnedAt ? <PinOffIcon /> : <PinIcon />}
+                {thread.pinnedAt ? "Unpin chat" : "Pin chat"}
+              </MenuItem>
+              <MenuItem
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onArchive(threadRef);
+                }}
+              >
+                <ArchiveIcon />
+                Archive
+              </MenuItem>
+              <MenuItem
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setRenaming(true);
+                }}
+              >
+                <SquarePenIcon />
+                Rename
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem
+                variant="destructive"
+                closeOnClick={isDeleteConfirming}
+                onClick={(event) => {
+                  void handleDeleteMenuClick(event);
+                }}
+              >
+                <TrashIcon />
+                {isDeleteConfirming ? `Confirm delete (${deleteConfirmSeconds}s)` : "Delete"}
+              </MenuItem>
+            </MenuGroup>
+          </MenuPopup>
+        </Menu>
       </SidebarMenuButton>
     </SidebarMenuItem>
   );
@@ -2990,7 +3150,6 @@ interface SidebarProjectsContentProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
-  confirmAndDeleteThread: ReturnType<typeof useThreadActions>["confirmAndDeleteThread"];
   sortedProjects: readonly SidebarProjectSnapshot[];
   chatThreads: readonly SidebarThreadSummary[];
   primaryEnvironmentId: ReturnType<typeof usePrimaryEnvironmentId>;
@@ -3033,7 +3192,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleNewThread,
     archiveThread,
     deleteThread,
-    confirmAndDeleteThread,
     sortedProjects,
     chatThreads,
     primaryEnvironmentId,
@@ -3154,6 +3312,22 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       title,
     });
   }, []);
+  const archiveChatThread = useCallback(
+    async (threadRef: ScopedThreadRef) => {
+      try {
+        await archiveThread(threadRef);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to archive chat",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [archiveThread],
+  );
   const pinChatThread = useCallback(async (threadRef: ScopedThreadRef) => {
     const api = readEnvironmentApi(threadRef.environmentId);
     if (!api) return;
@@ -3405,7 +3579,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                             isActive={routeThreadKey === threadKey}
                             onNavigate={navigateToThread}
                             onRename={renameChatThread}
-                            onDelete={confirmAndDeleteThread}
+                            onDelete={deleteThread}
+                            onArchive={archiveChatThread}
                             onPin={pinChatThread}
                             onUnpin={unpinChatThread}
                           />
@@ -3423,7 +3598,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </TabsContent>
 
           <TabsContent value="tickets">
-            <SidebarPlaceholderPanel label="Tickets" />
+            <TicketSidebarNav projects={sortedProjects} />
           </TabsContent>
         </Tabs>
       </SidebarGroup>
@@ -3456,7 +3631,7 @@ export default function Sidebar() {
   }));
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useNewThreadHandler();
-  const { archiveThread, deleteThread, confirmAndDeleteThread } = useThreadActions();
+  const { archiveThread, deleteThread } = useThreadActions();
   const routeThreadRef = useParams({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
@@ -4096,7 +4271,6 @@ export default function Sidebar() {
             handleNewThread={handleNewThread}
             archiveThread={archiveThread}
             deleteThread={deleteThread}
-            confirmAndDeleteThread={confirmAndDeleteThread}
             sortedProjects={sortedProjects}
             chatThreads={chatThreads}
             primaryEnvironmentId={primaryEnvironmentId}

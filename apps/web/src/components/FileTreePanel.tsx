@@ -257,7 +257,7 @@ export default function FileTreePanel(props: {
   availableEditors: ReadonlyArray<EditorId>;
   gitStatus?: GitStatusResult | null;
   onClose: () => void;
-  onOpenFileDiff: (filePath: string) => void;
+  onOpenFileInPanel: (filePath: string) => void;
   onAddPathMention: (kind: "file" | "directory", path: string) => void;
 }) {
   const {
@@ -268,7 +268,7 @@ export default function FileTreePanel(props: {
     mode,
     onAddPathMention,
     onClose,
-    onOpenFileDiff,
+    onOpenFileInPanel,
   } = props;
   const [viewMode, setViewMode] = useState<FileTreeViewMode>("all");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -434,7 +434,7 @@ export default function FileTreePanel(props: {
       );
 
       if (clicked === "open-file-diff") {
-        onOpenFileDiff(node.path);
+        onOpenFileInPanel(node.path);
       } else if (clicked?.startsWith("open-with:")) {
         await openWithEditor(node.path, clicked.slice("open-with:".length) as EditorId);
       } else if (clicked === "copy-path") {
@@ -449,7 +449,7 @@ export default function FileTreePanel(props: {
       availableEditorOptions,
       copyPath,
       onAddPathMention,
-      onOpenFileDiff,
+      onOpenFileInPanel,
       openWithEditor,
       preferredEditor,
     ],

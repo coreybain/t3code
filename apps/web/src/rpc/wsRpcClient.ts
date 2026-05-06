@@ -70,6 +70,18 @@ export interface WsRpcClient {
     readonly readFile: RpcUnaryMethod<typeof WS_METHODS.projectsReadFile>;
     readonly writeFile: RpcUnaryMethod<typeof WS_METHODS.projectsWriteFile>;
   };
+  readonly tickets: {
+    readonly list: RpcUnaryMethod<typeof WS_METHODS.ticketsList>;
+    readonly create: RpcUnaryMethod<typeof WS_METHODS.ticketsCreate>;
+    readonly update: RpcUnaryMethod<typeof WS_METHODS.ticketsUpdate>;
+    readonly archive: RpcUnaryMethod<typeof WS_METHODS.ticketsArchive>;
+  };
+  readonly ticketMilestones: {
+    readonly list: RpcUnaryMethod<typeof WS_METHODS.ticketMilestonesList>;
+    readonly create: RpcUnaryMethod<typeof WS_METHODS.ticketMilestonesCreate>;
+    readonly update: RpcUnaryMethod<typeof WS_METHODS.ticketMilestonesUpdate>;
+    readonly archive: RpcUnaryMethod<typeof WS_METHODS.ticketMilestonesArchive>;
+  };
   readonly filesystem: {
     readonly browse: RpcUnaryMethod<typeof WS_METHODS.filesystemBrowse>;
   };
@@ -155,6 +167,22 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.projectsReadFile](input)),
       writeFile: (input) =>
         transport.request((client) => client[WS_METHODS.projectsWriteFile](input)),
+    },
+    tickets: {
+      list: (input) => transport.request((client) => client[WS_METHODS.ticketsList](input)),
+      create: (input) => transport.request((client) => client[WS_METHODS.ticketsCreate](input)),
+      update: (input) => transport.request((client) => client[WS_METHODS.ticketsUpdate](input)),
+      archive: (input) => transport.request((client) => client[WS_METHODS.ticketsArchive](input)),
+    },
+    ticketMilestones: {
+      list: (input) =>
+        transport.request((client) => client[WS_METHODS.ticketMilestonesList](input)),
+      create: (input) =>
+        transport.request((client) => client[WS_METHODS.ticketMilestonesCreate](input)),
+      update: (input) =>
+        transport.request((client) => client[WS_METHODS.ticketMilestonesUpdate](input)),
+      archive: (input) =>
+        transport.request((client) => client[WS_METHODS.ticketMilestonesArchive](input)),
     },
     filesystem: {
       browse: (input) => transport.request((client) => client[WS_METHODS.filesystemBrowse](input)),

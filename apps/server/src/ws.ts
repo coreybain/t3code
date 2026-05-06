@@ -18,6 +18,10 @@ import {
   ProjectReadFileError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  TicketId,
+  TicketMilestoneId,
+  TicketMilestoneRpcError,
+  TicketRpcError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   ThreadId,
@@ -57,6 +61,8 @@ import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptR
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import { TicketMilestoneRepository } from "./persistence/Services/TicketMilestones.ts";
+import { TicketRepository } from "./persistence/Services/Tickets.ts";
 import {
   BootstrapCredentialService,
   type BootstrapCredentialChange,
@@ -151,6 +157,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const startup = yield* ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
+      const tickets = yield* TicketRepository;
+      const ticketMilestones = yield* TicketMilestoneRepository;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const serverEnvironment = yield* ServerEnvironment;
@@ -589,6 +597,18 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      const toTicketRpcError = (cause: unknown, fallbackMessage: string) =>
+        new TicketRpcError({
+          message: cause instanceof Error ? cause.message : fallbackMessage,
+          cause,
+        });
+
+      const toTicketMilestoneRpcError = (cause: unknown, fallbackMessage: string) =>
+        new TicketMilestoneRpcError({
+          message: cause instanceof Error ? cause.message : fallbackMessage,
+          cause,
+        });
+
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -880,6 +900,165 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               }),
             ),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.ticketsList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.ticketsList,
+            tickets.list(input).pipe(
+              Effect.map((ticketRows) => ({ tickets: [...ticketRows] })),
+              Effect.mapError((cause) => toTicketRpcError(cause, "Failed to list tickets")),
+            ),
+            { "rpc.aggregate": "tickets" },
+          ),
+        [WS_METHODS.ticketsCreate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.ticketsCreate,
+            Effect.gen(function* () {
+              const now = new Date().toISOString();
+              const ticket = {
+                id: TicketId.make(crypto.randomUUID()),
+                projectId: input.projectId ?? null,
+                title: input.title,
+                description: input.description ?? "",
+                status: input.status ?? "triage",
+                priority: input.priority ?? "none",
+                labels: input.labels ?? [],
+                milestoneId: input.milestoneId ?? null,
+                sourceThreadId: input.sourceThreadId ?? null,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+              };
+              yield* tickets.upsert(ticket);
+              return { ticket };
+            }).pipe(Effect.mapError((cause) => toTicketRpcError(cause, "Failed to create ticket"))),
+            { "rpc.aggregate": "tickets" },
+          ),
+        [WS_METHODS.ticketsUpdate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.ticketsUpdate,
+            tickets
+              .patch({
+                ...input,
+                updatedAt: new Date().toISOString(),
+              })
+              .pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () =>
+                      Effect.fail(
+                        new TicketRpcError({
+                          message: "Ticket not found",
+                        }),
+                      ),
+                    onSome: (ticket) => Effect.succeed({ ticket }),
+                  }),
+                ),
+                Effect.mapError((cause) => toTicketRpcError(cause, "Failed to update ticket")),
+              ),
+            { "rpc.aggregate": "tickets" },
+          ),
+        [WS_METHODS.ticketsArchive]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.ticketsArchive,
+            tickets.archive({ ...input, archivedAt: new Date().toISOString() }).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () =>
+                    Effect.fail(
+                      new TicketRpcError({
+                        message: "Ticket not found",
+                      }),
+                    ),
+                  onSome: (ticket) => Effect.succeed({ ticket }),
+                }),
+              ),
+              Effect.mapError((cause) => toTicketRpcError(cause, "Failed to archive ticket")),
+            ),
+            { "rpc.aggregate": "tickets" },
+          ),
+        [WS_METHODS.ticketMilestonesList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.ticketMilestonesList,
+            ticketMilestones.list(input).pipe(
+              Effect.map((milestones) => ({ milestones: [...milestones] })),
+              Effect.mapError((cause) =>
+                toTicketMilestoneRpcError(cause, "Failed to list ticket projects"),
+              ),
+            ),
+            { "rpc.aggregate": "ticket-milestones" },
+          ),
+        [WS_METHODS.ticketMilestonesCreate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.ticketMilestonesCreate,
+            Effect.gen(function* () {
+              const now = new Date().toISOString();
+              const milestone = {
+                id: TicketMilestoneId.make(crypto.randomUUID()),
+                projectId: input.projectId ?? null,
+                title: input.title,
+                description: input.description ?? "",
+                status: input.status ?? "planned",
+                targetDate: input.targetDate ?? null,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+              };
+              yield* ticketMilestones.upsert(milestone);
+              return { milestone };
+            }).pipe(
+              Effect.mapError((cause) =>
+                toTicketMilestoneRpcError(cause, "Failed to create ticket project"),
+              ),
+            ),
+            { "rpc.aggregate": "ticket-milestones" },
+          ),
+        [WS_METHODS.ticketMilestonesUpdate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.ticketMilestonesUpdate,
+            ticketMilestones
+              .patch({
+                ...input,
+                updatedAt: new Date().toISOString(),
+              })
+              .pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () =>
+                      Effect.fail(
+                        new TicketMilestoneRpcError({
+                          message: "Ticket project not found",
+                        }),
+                      ),
+                    onSome: (milestone) => Effect.succeed({ milestone }),
+                  }),
+                ),
+                Effect.mapError((cause) =>
+                  toTicketMilestoneRpcError(cause, "Failed to update ticket project"),
+                ),
+              ),
+            { "rpc.aggregate": "ticket-milestones" },
+          ),
+        [WS_METHODS.ticketMilestonesArchive]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.ticketMilestonesArchive,
+            ticketMilestones.archive({ ...input, archivedAt: new Date().toISOString() }).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () =>
+                    Effect.fail(
+                      new TicketMilestoneRpcError({
+                        message: "Ticket project not found",
+                      }),
+                    ),
+                  onSome: (milestone) => Effect.succeed({ milestone }),
+                }),
+              ),
+              Effect.mapError((cause) =>
+                toTicketMilestoneRpcError(cause, "Failed to archive ticket project"),
+              ),
+            ),
+            { "rpc.aggregate": "ticket-milestones" },
           ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, open.openInEditor(input), {

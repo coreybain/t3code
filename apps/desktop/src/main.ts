@@ -17,6 +17,7 @@ import {
   protocol,
   safeStorage,
   shell,
+  WebContentsView,
 } from "electron";
 import type { MenuItemConstructorOptions, OpenDialogOptions } from "electron";
 import type {
@@ -30,6 +31,8 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
   DesktopUpdateState,
+  BrowserPanelBounds,
+  BrowserPanelState,
 } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
@@ -102,6 +105,18 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const BROWSER_PANEL_CREATE_CHANNEL = "desktop:browser-panel:create";
+const BROWSER_PANEL_ATTACH_CHANNEL = "desktop:browser-panel:attach";
+const BROWSER_PANEL_DETACH_CHANNEL = "desktop:browser-panel:detach";
+const BROWSER_PANEL_DESTROY_CHANNEL = "desktop:browser-panel:destroy";
+const BROWSER_PANEL_NAVIGATE_CHANNEL = "desktop:browser-panel:navigate";
+const BROWSER_PANEL_RELOAD_CHANNEL = "desktop:browser-panel:reload";
+const BROWSER_PANEL_GO_BACK_CHANNEL = "desktop:browser-panel:go-back";
+const BROWSER_PANEL_GO_FORWARD_CHANNEL = "desktop:browser-panel:go-forward";
+const BROWSER_PANEL_OPEN_DEVTOOLS_CHANNEL = "desktop:browser-panel:open-devtools";
+const BROWSER_PANEL_CLOSE_DEVTOOLS_CHANNEL = "desktop:browser-panel:close-devtools";
+const BROWSER_PANEL_GET_STATE_CHANNEL = "desktop:browser-panel:get-state";
+const BROWSER_PANEL_STATE_CHANNEL = "desktop:browser-panel:state";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
@@ -228,6 +243,16 @@ let desktopServerExposureMode: DesktopServerExposureMode = desktopSettings.serve
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
+
+interface BrowserPanelRecord {
+  readonly panelId: string;
+  readonly view: WebContentsView;
+  attached: boolean;
+  bounds: BrowserPanelBounds | null;
+  errorMessage?: string;
+}
+
+const browserPanels = new Map<string, BrowserPanelRecord>();
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
   platform: process.platform,
   processArch: process.arch,
@@ -426,6 +451,151 @@ function getSafeExternalUrl(rawUrl: unknown): string | null {
   }
 
   return parsedUrl.toString();
+}
+
+function normalizeBrowserPanelId(rawInput: unknown): string {
+  if (typeof rawInput !== "object" || rawInput === null) {
+    throw new Error("Invalid browser panel input.");
+  }
+  const { panelId } = rawInput as { panelId?: unknown };
+  if (typeof panelId !== "string" || panelId.trim().length === 0) {
+    throw new Error("Invalid browser panel id.");
+  }
+  return panelId.trim();
+}
+
+function normalizeBrowserPanelBounds(rawBounds: unknown): BrowserPanelBounds {
+  if (typeof rawBounds !== "object" || rawBounds === null) {
+    throw new Error("Invalid browser panel bounds.");
+  }
+  const bounds = rawBounds as Partial<Record<keyof BrowserPanelBounds, unknown>>;
+  const next = {
+    x: Number(bounds.x),
+    y: Number(bounds.y),
+    width: Number(bounds.width),
+    height: Number(bounds.height),
+  };
+  if (
+    !Number.isFinite(next.x) ||
+    !Number.isFinite(next.y) ||
+    !Number.isFinite(next.width) ||
+    !Number.isFinite(next.height)
+  ) {
+    throw new Error("Invalid browser panel bounds.");
+  }
+
+  return {
+    x: Math.max(0, Math.round(next.x)),
+    y: Math.max(0, Math.round(next.y)),
+    width: Math.max(0, Math.round(next.width)),
+    height: Math.max(0, Math.round(next.height)),
+  };
+}
+
+function getSafeBrowserPanelUrl(rawUrl: unknown): string {
+  if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
+    throw new Error("Invalid browser URL.");
+  }
+  const value = rawUrl.trim();
+  const withProtocol = /^[a-z][a-z\d+\-.]*:/i.test(value) ? value : `https://${value}`;
+  const parsed = new URL(withProtocol);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Browser panel only supports http and https URLs.");
+  }
+  return parsed.toString();
+}
+
+function readBrowserPanelState(record: BrowserPanelRecord): BrowserPanelState {
+  return {
+    url: record.view.webContents.getURL(),
+    title: record.view.webContents.getTitle(),
+    loading: record.view.webContents.isLoading(),
+    canGoBack: record.view.webContents.navigationHistory.canGoBack(),
+    canGoForward: record.view.webContents.navigationHistory.canGoForward(),
+    ...(record.errorMessage ? { errorMessage: record.errorMessage } : {}),
+  };
+}
+
+function emitBrowserPanelState(record: BrowserPanelRecord): void {
+  mainWindow?.webContents.send(
+    BROWSER_PANEL_STATE_CHANNEL,
+    record.panelId,
+    readBrowserPanelState(record),
+  );
+}
+
+function getBrowserPanel(panelId: string): BrowserPanelRecord {
+  const record = browserPanels.get(panelId);
+  if (!record) {
+    throw new Error(`Browser panel not found: ${panelId}`);
+  }
+  return record;
+}
+
+function createBrowserPanel(panelId: string): BrowserPanelRecord {
+  const existing = browserPanels.get(panelId);
+  if (existing) {
+    return existing;
+  }
+
+  const view = new WebContentsView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  const record: BrowserPanelRecord = {
+    panelId,
+    view,
+    attached: false,
+    bounds: null,
+  };
+
+  view.webContents.on("did-start-loading", () => {
+    delete record.errorMessage;
+    emitBrowserPanelState(record);
+  });
+  view.webContents.on("did-stop-loading", () => emitBrowserPanelState(record));
+  view.webContents.on("page-title-updated", () => emitBrowserPanelState(record));
+  view.webContents.on("did-navigate", () => emitBrowserPanelState(record));
+  view.webContents.on("did-navigate-in-page", () => emitBrowserPanelState(record));
+  view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
+    if (errorCode === -3) {
+      return;
+    }
+    record.errorMessage = `${errorDescription} (${validatedUrl})`;
+    emitBrowserPanelState(record);
+  });
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    const safeUrl = getSafeExternalUrl(url);
+    if (safeUrl) {
+      void shell.openExternal(safeUrl);
+    }
+    return { action: "deny" };
+  });
+
+  browserPanels.set(panelId, record);
+  return record;
+}
+
+function detachBrowserPanel(record: BrowserPanelRecord): void {
+  if (!record.attached || !mainWindow) {
+    record.attached = false;
+    return;
+  }
+  mainWindow.contentView.removeChildView(record.view);
+  record.attached = false;
+}
+
+function destroyBrowserPanel(panelId: string): void {
+  const record = browserPanels.get(panelId);
+  if (!record) {
+    return;
+  }
+  detachBrowserPanel(record);
+  record.view.webContents.close({ waitForBeforeUnload: false });
+  browserPanels.delete(panelId);
 }
 
 function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
@@ -1788,6 +1958,93 @@ function registerIpcHandlers(): void {
     }
   });
 
+  ipcMain.removeHandler(BROWSER_PANEL_CREATE_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_CREATE_CHANNEL, async (_event, rawInput: unknown) => {
+    createBrowserPanel(normalizeBrowserPanelId(rawInput));
+  });
+
+  ipcMain.removeHandler(BROWSER_PANEL_ATTACH_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_ATTACH_CHANNEL, async (_event, rawInput: unknown) => {
+    const panelId = normalizeBrowserPanelId(rawInput);
+    const bounds = normalizeBrowserPanelBounds(
+      typeof rawInput === "object" && rawInput !== null
+        ? (rawInput as { bounds?: unknown }).bounds
+        : null,
+    );
+    const record = createBrowserPanel(panelId);
+    if (!mainWindow) {
+      throw new Error("Main window is unavailable.");
+    }
+    if (!record.attached) {
+      mainWindow.contentView.addChildView(record.view);
+      record.attached = true;
+    }
+    record.bounds = bounds;
+    record.view.setBounds(bounds);
+    emitBrowserPanelState(record);
+  });
+
+  ipcMain.removeHandler(BROWSER_PANEL_DETACH_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_DETACH_CHANNEL, async (_event, rawInput: unknown) => {
+    detachBrowserPanel(getBrowserPanel(normalizeBrowserPanelId(rawInput)));
+  });
+
+  ipcMain.removeHandler(BROWSER_PANEL_DESTROY_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_DESTROY_CHANNEL, async (_event, rawInput: unknown) => {
+    destroyBrowserPanel(normalizeBrowserPanelId(rawInput));
+  });
+
+  ipcMain.removeHandler(BROWSER_PANEL_NAVIGATE_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_NAVIGATE_CHANNEL, async (_event, rawInput: unknown) => {
+    const panelId = normalizeBrowserPanelId(rawInput);
+    const url = getSafeBrowserPanelUrl(
+      typeof rawInput === "object" && rawInput !== null
+        ? (rawInput as { url?: unknown }).url
+        : null,
+    );
+    const record = createBrowserPanel(panelId);
+    delete record.errorMessage;
+    await record.view.webContents.loadURL(url);
+  });
+
+  ipcMain.removeHandler(BROWSER_PANEL_RELOAD_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_RELOAD_CHANNEL, async (_event, rawInput: unknown) => {
+    getBrowserPanel(normalizeBrowserPanelId(rawInput)).view.webContents.reload();
+  });
+
+  ipcMain.removeHandler(BROWSER_PANEL_GO_BACK_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_GO_BACK_CHANNEL, async (_event, rawInput: unknown) => {
+    const webContents = getBrowserPanel(normalizeBrowserPanelId(rawInput)).view.webContents;
+    if (webContents.navigationHistory.canGoBack()) {
+      webContents.navigationHistory.goBack();
+    }
+  });
+
+  ipcMain.removeHandler(BROWSER_PANEL_GO_FORWARD_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_GO_FORWARD_CHANNEL, async (_event, rawInput: unknown) => {
+    const webContents = getBrowserPanel(normalizeBrowserPanelId(rawInput)).view.webContents;
+    if (webContents.navigationHistory.canGoForward()) {
+      webContents.navigationHistory.goForward();
+    }
+  });
+
+  ipcMain.removeHandler(BROWSER_PANEL_OPEN_DEVTOOLS_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_OPEN_DEVTOOLS_CHANNEL, async (_event, rawInput: unknown) => {
+    getBrowserPanel(normalizeBrowserPanelId(rawInput)).view.webContents.openDevTools({
+      mode: "detach",
+    });
+  });
+
+  ipcMain.removeHandler(BROWSER_PANEL_CLOSE_DEVTOOLS_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_CLOSE_DEVTOOLS_CHANNEL, async (_event, rawInput: unknown) => {
+    getBrowserPanel(normalizeBrowserPanelId(rawInput)).view.webContents.closeDevTools();
+  });
+
+  ipcMain.removeHandler(BROWSER_PANEL_GET_STATE_CHANNEL);
+  ipcMain.handle(BROWSER_PANEL_GET_STATE_CHANNEL, async (_event, rawInput: unknown) =>
+    readBrowserPanelState(createBrowserPanel(normalizeBrowserPanelId(rawInput))),
+  );
+
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);
   ipcMain.handle(UPDATE_GET_STATE_CHANNEL, async () => updateState);
 
@@ -2023,6 +2280,9 @@ function createWindow(): BrowserWindow {
   }
 
   window.on("closed", () => {
+    for (const panelId of browserPanels.keys()) {
+      destroyBrowserPanel(panelId);
+    }
     if (mainWindow === window) {
       mainWindow = null;
     }

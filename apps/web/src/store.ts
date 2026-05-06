@@ -1825,7 +1825,9 @@ export function selectSidebarThreadsAcrossEnvironments(state: AppState): Sidebar
 export function selectSidebarChatThreadsAcrossEnvironments(
   state: AppState,
 ): SidebarThreadSummary[] {
-  return selectSidebarThreadsAcrossEnvironments(state).filter((thread) => thread.kind === "chat");
+  return selectSidebarThreadsAcrossEnvironments(state).filter(
+    (thread) => thread.kind === "chat" && thread.archivedAt === null,
+  );
 }
 
 export function selectSidebarThreadsForProjectRef(

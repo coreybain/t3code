@@ -48,8 +48,22 @@ const rpcClientMock = {
     ),
   },
   projects: {
+    listEntries: vi.fn(),
+    readFile: vi.fn(),
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
+  },
+  tickets: {
+    list: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    archive: vi.fn(),
+  },
+  ticketMilestones: {
+    list: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    archive: vi.fn(),
   },
   filesystem: {
     browse: vi.fn(),

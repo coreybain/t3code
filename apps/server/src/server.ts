@@ -68,6 +68,8 @@ import {
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import { TicketMilestoneRepositoryLive } from "./persistence/Layers/TicketMilestones.ts";
+import { TicketRepositoryLive } from "./persistence/Layers/Tickets.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -236,6 +238,8 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(KeybindingsLive),
   Layer.provideMerge(ProviderRegistryLive),
   Layer.provideMerge(ServerSettingsLive),
+  Layer.provideMerge(TicketRepositoryLive),
+  Layer.provideMerge(TicketMilestoneRepositoryLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),
   Layer.provideMerge(RepositoryIdentityResolverLive),
